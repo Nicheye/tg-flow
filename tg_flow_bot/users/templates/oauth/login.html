@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://telegram.org 'unsafe-inline'; frame-src https://oauth.telegram.org https://telegram.org; frame-ancestors 'none'; base-uri 'none'; form-action 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self'">
+    <title>Sign in to TG Flow</title>
+    <style>
+        body { background:#09090b; color:#fafafa; font:16px system-ui,sans-serif; margin:0; min-height:100vh; display:grid; place-items:center; }
+        main { width:min(420px,calc(100% - 32px)); border:1px solid #27272a; border-radius:16px; padding:28px; box-sizing:border-box; background:#18181b; }
+        h1 { margin:0 0 8px; font-size:22px; } p { color:#a1a1aa; line-height:1.5; } .widget { display:flex; justify-content:center; margin:28px 0 8px; }
+        .error { color:#fca5a5; display:none; margin-top:16px; } code { color:#ddd6fe; }
+    </style>
+</head>
+<body>
+<main>
+    <h1>Sign in to TG Flow</h1>
+    <p><strong>{{ client.client_name }}</strong> is requesting access. Authenticate with Telegram before reviewing permissions.</p>
+    {% if telegram_bot_username %}
+        <div class="widget" id="telegram-widget"></div>
+        <p class="error" id="auth-error">Telegram sign-in failed. Please retry.</p>
+    {% else %}
+        <p class="error" style="display:block">Telegram login is not configured. Set <code>TELEGRAM_BOT_USERNAME</code>.</p>
+    {% endif %}
+    <form hidden>{% csrf_token %}</form>
+</main>
+<script>
+    async function onTelegramAuth(user) {
+        const response = await fetch('/oauth/session/telegram', {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: {'Content-Type': 'application/json', 'X-CSRFToken': document.querySelector('[name=csrfmiddlewaretoken]').value},
+            body: JSON.stringify({
+                tg_user_id: user.id,
+                tg_username: user.username || null,
+                first_name: user.first_name || null,
+                last_name: user.last_name || null,
+                photo_url: user.photo_url || null,
+                auth_date: user.auth_date,
+                hash: user.hash
+            })
+        });
+        if (response.ok) window.location.reload();
+        else document.getElementById('auth-error').style.display = 'block';
+    }
+    {% if telegram_bot_username %}
+    const script = document.createElement('script');
+    script.src = 'https://telegram.org/js/telegram-widget.js?22';
+    script.async = true;
+    script.dataset.telegramLogin = '{{ telegram_bot_username|escapejs }}';
+    script.dataset.size = 'large';
+    script.dataset.radius = '8';
+    script.dataset.onauth = 'onTelegramAuth(user)';
+    document.getElementById('telegram-widget').appendChild(script);
+    {% endif %}
+</script>
+</body>
+</html>

@@ -1,0 +1,32 @@
+# Local credentials and configuration (example templates are tracked).
+.env
+.env.*
+!.env.example
+**/envs/*/env.op
+*.env.local
+*.pem
+*.key
+
+# Local data and runtime artifacts.
+*.sqlite3*
+*.db
+*.log
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Dependencies and build outputs.
+.venv/
+venv/
+node_modules/
+dist/
+dist-ssr/
+*.tsbuildinfo
+
+# Editor and operating system files.
+.DS_Store
+.idea/
+.vscode/

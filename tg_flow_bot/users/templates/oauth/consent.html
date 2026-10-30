@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'">
+    <title>Authorize {{ client.client_name }}</title>
+    <style>
+        body { background:#09090b; color:#fafafa; font:16px system-ui,sans-serif; margin:0; min-height:100vh; display:grid; place-items:center; }
+        main { width:min(480px,calc(100% - 32px)); border:1px solid #27272a; border-radius:16px; padding:28px; box-sizing:border-box; background:#18181b; }
+        h1 { margin:0 0 8px; font-size:22px; } p,li { color:#a1a1aa; line-height:1.5; } strong { color:#fafafa; }
+        .target,.warning { padding:12px; border-radius:10px; background:#09090b; overflow-wrap:anywhere; }
+        .warning { color:#fbbf24; border:1px solid #78350f; } .actions { display:flex; gap:12px; margin-top:24px; }
+        button { border:0; border-radius:10px; padding:11px 18px; font-weight:650; cursor:pointer; } .allow { background:#fafafa; color:#09090b; } .deny { background:#27272a; color:#fafafa; }
+    </style>
+</head>
+<body>
+<main>
+    <h1>Authorize {{ client.client_name }}</h1>
+    <p>This client is asking to access your TG Flow account as <strong>{{ request.user }}</strong>.</p>
+    <ul>
+        {% for scope in scopes %}
+            <li>{% if scope == 'mentions:read' %}Read your mentions and message context{% else %}Archive mentions and send Telegram replies{% endif %}</li>
+        {% endfor %}
+    </ul>
+    <p>Authorization will return to:</p>
+    <p class="target"><strong>{{ redirect_uri }}</strong></p>
+    {% if loopback_redirect %}
+        <p class="warning">This redirects to a local application on your device. Continue only if you started that application.</p>
+    {% endif %}
+    <form method="post" action="/oauth/authorize/decision">
+        {% csrf_token %}
+        <input type="hidden" name="request_id" value="{{ request_id }}">
+        <div class="actions">
+            <button class="allow" type="submit" name="decision" value="allow">Allow</button>
+            <button class="deny" type="submit" name="decision" value="deny">Deny</button>
+        </div>
+    </form>
+</main>
+</body>
+</html>

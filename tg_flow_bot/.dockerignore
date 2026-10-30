@@ -1,0 +1,43 @@
+# Git
+.git
+.gitignore
+
+# Python
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+*.sqlite3*
+.Python
+.venv
+venv
+ENV
+env
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+*.env.local
+envs/
+
+# Logs
+*.log
+
+# Documentation
+README.md
+docs/
+
+# Tests
+.pytest_cache
+.coverage
+htmlcov/
+
