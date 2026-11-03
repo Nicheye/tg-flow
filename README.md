@@ -36,10 +36,13 @@ The prompt below is intended for an agent that can inspect the source and access
 ```text
 Help me deploy TG Flow on my VPS. I want a private self-hosted Telegram
 inbox and a remote MCP server accessible at https://<my-domain>/mcp.
-The workspace contains tg_flow_bot, tg_flow_frontend, and tg_flow_storage.
-Read their current source, README files, env examples, and MCP_AND_CLI.md.
-Use the exact checked-out revisions; do not assume unpublished changes are
-present in remote default branches.
+Use this checked-out TG Flow monorepo, containing tg_flow_bot,
+tg_flow_frontend, and tg_flow_storage. Read their current source, README files,
+env examples, MCP_AND_CLI.md, docs/vps-deployment.md, and deployment/vps/.
+Use the exact checked-out revision and pinned dependencies; do not substitute
+remote default branches or older runtime images. Adapt deployment templates
+to my actual host/domain. The runbook's recorded VPS is an example installation,
+not permission to connect to it or copy its credentials.
 
 First inspect the VPS and explain what is already running: OS, Docker/Compose,
 ports, DNS, reverse proxy, existing TG Flow containers, volumes and backups.
@@ -74,7 +77,20 @@ existing database or deployment, inspect its migration state and establish
 a backup and rollback plan. Never delete volumes, reset databases, revoke
 credentials, change unrelated services, or deploy over an existing installation
 without my explicit approval. Do not run the local development start.sh as a
-production installer.
+production installer. Use a maintenance container for migrations rather than
+starting a second polling bot. Verify a restore into an isolated database and
+rehearse pending migrations there before changing the existing database.
+Preserve Business account ownership, captured private history, read checkpoints
+and all business_reply_attempts records. Never downgrade or erase the reply
+ledger, expire uncertain attempts, or automatically resend them after recovery.
+
+Include automatic group subscriptions and Telegram Business private chats.
+Help me enable Secretary/Business Mode in BotFather and connect the bot through
+Telegram Settings > Chat Automation, selecting the private conversations it may
+access. Website login alone does not connect the Telegram account. Verify the
+connection and newly delivered messages without printing private message text.
+Check owner isolation and the UI's active/disconnected and full/disabled states.
+Do not promise old-history import or automatic Telegram read-receipt syncing.
 
 Verify HTTPS externally, /.well-known/oauth-protected-resource/mcp,
 /.well-known/oauth-authorization-server and that /mcp rejects unauthenticated
@@ -84,6 +100,28 @@ Telegram login, OAuth consent and a real read-only MCP tool call from my
 chosen client. If a client or provider setting requires me, tell me exactly
 what to do; do not claim success based only on a health check. Configure
 registration/token endpoint rate limiting at ingress where supported.
+Refresh the client's tool catalogue and check that the current chat, unread,
+reply and reply-status tools are registered with their documented scopes.
+
+For requested GPT summaries, read every page of a fixed unread snapshot, produce
+the summary successfully, then mark only the processed boundary read. Reading
+alone and failed summaries must not advance the checkpoint. Verify Mark as read
+uses the same per-owner checkpoint in the UI and MCP; do not acknowledge real
+messages merely to perform a deployment health check.
+
+Check the private Reply / Send as me UI, write-scope enforcement and the MCP
+reply_to_chat_message confirmation gate using mocks or non-sending probes.
+Sending requires a current owner-matched Business connection, can_reply rights,
+and Telegram's recent-incoming-message eligibility. Never send a real test
+message without my explicit approval of the recipient and exact text.
+Use one UUID per approved attempt; repeated keys must never cause another send.
+Check delivery only through the read-only get_chat_reply_status tool or GET
+endpoint. A timeout or missing result does not authorize a new attempt: check
+Telegram and reconcile before a separately approved new send. Explain any
+unknown delivery or reply_attached=false result without automatically retrying.
+Preserve attempt metadata across browser reloads and report storage/recovery
+limitations honestly. Distinguish registered tools and passing tests from a
+real outgoing-message delivery that has actually been verified.
 
 Finish with the verified public MCP URL, where to add it in my client, the
 commands to inspect and update the deployment, backup/restore guidance, and
