@@ -7,6 +7,9 @@
 *.pem
 *.key
 
+# Generated deployment snapshot; regenerate with snapshot-source.py.
+deployment/vps/source-manifest.json
+
 # Local data and runtime artifacts.
 *.sqlite3*
 *.db

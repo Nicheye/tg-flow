@@ -45,6 +45,7 @@ class AuthService {
           tg_username: data.username || null,
           first_name: data.first_name,
           last_name: data.last_name || null,
+          photo_url: data.photo_url,
           auth_date: data.auth_date,
           hash: data.hash,
         }),

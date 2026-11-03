@@ -5,6 +5,12 @@ export default {
     "./src/**/*.{js,ts,jsx,tsx}",
   ],
   theme: {
+    boxShadow: Object.fromEntries(
+      ['sm', 'DEFAULT', 'md', 'lg', 'xl', '2xl', 'inner', 'none'].map((size) => [size, 'none'])
+    ),
+    borderRadius: Object.fromEntries(
+      ['none', 'sm', 'DEFAULT', 'md', 'lg', 'xl', '2xl', '3xl', 'full'].map((size) => [size, '0'])
+    ),
     extend: {
       colors: {
         // Linear.app inspired dark theme
@@ -33,7 +39,8 @@ export default {
         },
       },
       fontFamily: {
-        sans: ['Inter', '-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'Roboto', 'sans-serif'],
+        accent: ['Redaction 50', 'Georgia', 'Times New Roman', 'serif'],
+        sans: ['DM Sans', '-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'Roboto', 'sans-serif'],
       },
       animation: {
         'spin-slow': 'spin 3s linear infinite',
@@ -44,10 +51,6 @@ export default {
       },
       transitionDuration: {
         '400': '400ms',
-      },
-      borderRadius: {
-        'xl': '12px',
-        '2xl': '16px',
       },
     },
   },

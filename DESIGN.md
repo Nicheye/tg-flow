@@ -7,10 +7,10 @@ TG Flow is a straightforward workspace for reviewing Telegram activity. Its dash
 ## Foundations
 
 - **Mode:** Operate.
-- **Typography:** system sans-serif for interface and headings; monospace only for code.
+- **Typography:** DM Sans for body text, controls, navigation, and metadata; Redaction 50 regular for page headings and headline numbers. Fonts are self-hosted with swap loading; system fallbacks cover unsupported scripts. Monospace is reserved for code.
 - **Palette:** white and light gray surfaces, dark neutral text, and restrained functional colors for errors and status.
-- **Surfaces:** thin gray borders and flat white panels, without atmospheric effects.
-- **Geometry:** simple 10–12px panel radii, comfortable spacing, and compact controls.
+- **Surfaces:** thin gray borders and flat white panels, without box shadows, text shadows, drop shadows, or atmospheric effects.
+- **Geometry:** square corners (zero border radius) for all UI components, comfortable spacing, and compact controls. The dashboard has no logo block.
 
 ## Interaction
 

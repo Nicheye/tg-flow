@@ -107,6 +107,8 @@ async def run():
     async with main.lifespan(main.app):
         pass
 asyncio.run(run())
+bot.updater.start_polling.assert_awaited_once_with(allowed_updates=main.Update.ALL_TYPES, drop_pending_updates=False)
+assert 'my_chat_member' in main.Update.ALL_TYPES
 assert 'auth_project.asgi' not in sys.modules
 assert 'auth_project.startup' not in sys.modules
 """

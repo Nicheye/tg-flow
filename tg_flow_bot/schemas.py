@@ -1,6 +1,8 @@
 from datetime import datetime
+from typing import Literal
+from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 # === Chat Schemas ===
 
@@ -105,9 +107,30 @@ class ChatSubscriptionResponse(BaseModel):
     title: str | None = None
     username: str | None = None
     chat_type: str
+    source: str = "group"
+    connection_active: bool = True
+    telegram_chat_id: int | None = None
     capture_mode: str
     capture_mode_changed_at: datetime
     subscribed_at: datetime
+    read_through_message_id: int = 0
+    last_read_at: datetime | None = None
+    unread_count: int = 0
+
+
+class ChatUnreadResponse(BaseModel):
+    messages: list[ChatMessageResponse]
+    read_through_message_id: int
+    snapshot_through_message_id: int
+    capture_mode_changed_at: datetime
+    next_after_message_id: int | None
+    has_more: bool
+    unread_count: int
+
+
+class ChatReadRequest(BaseModel):
+    through_message_id: int = Field(ge=1)
+    capture_mode_changed_at: datetime
 
 
 class CaptureModeUpdate(BaseModel):
@@ -144,6 +167,20 @@ class ReplyRequest(BaseModel):
 class ReplyResponse(BaseModel):
     success: bool
     message_id: int | None = None
+    error: str | None = None
+
+
+class BusinessReplyRequest(BaseModel):
+    text: str = Field(min_length=1, max_length=4096)
+    request_id: UUID
+
+
+class BusinessReplyResponse(BaseModel):
+    status: Literal["sent", "failed", "unknown"]
+    request_id: str
+    message_id: int | None = None
+    reply_attached: bool = False
+    error_code: str | None = None
     error: str | None = None
 
 

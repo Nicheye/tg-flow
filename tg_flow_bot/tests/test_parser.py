@@ -29,7 +29,7 @@ async def test_ignores_no_entities(db, make_update, mock_context):
     await message_handler(update, mock_context)
 
     assert await MentionedMessage.all().count() == 0
-    assert await ChatMessage.all().count() == 1
+    assert await ChatMessage.all().count() == 0
 
 
 @pytest.mark.asyncio
@@ -38,7 +38,7 @@ async def test_ignores_no_subscription(db, chat, make_update, mock_context):
     await message_handler(update, mock_context)
 
     assert await MentionedMessage.all().count() == 0
-    assert await ChatMessage.all().count() == 1
+    assert await ChatMessage.all().count() == 0
 
 
 @pytest.mark.asyncio
@@ -170,7 +170,9 @@ async def test_edited_mention_updates_without_creating_duplicate(
 
 
 @pytest.mark.asyncio
-async def test_edit_removing_mention_removes_inbox_item(db, subscription, make_update, mock_context):
+async def test_edit_removing_mention_removes_inbox_item(
+    db, subscription, make_update, mock_context
+):
     update = make_update("Hey @testuser", mentions=[(4, 9, "mention")])
     await message_handler(update, mock_context)
 
@@ -185,7 +187,9 @@ async def test_edit_removing_mention_removes_inbox_item(db, subscription, make_u
 
 
 @pytest.mark.asyncio
-async def test_repeated_same_username_creates_one_mention(db, subscription, make_update, mock_context):
+async def test_repeated_same_username_creates_one_mention(
+    db, subscription, make_update, mock_context
+):
     update = make_update(
         "@testuser and @testuser",
         mentions=[(0, 9, "mention"), (14, 9, "mention")],

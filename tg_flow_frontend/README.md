@@ -1,25 +1,53 @@
 # TG Flow Frontend
 
-A web interface and Telegram Mini App for reviewing and managing mentions. The Bot API verifies the Telegram user and issues a session through `/api/auth` on the same origin.
+Веб-интерфейс и Telegram Mini App для просмотра, разбора и обработки упоминаний. Bot API подтверждает пользователя Telegram и выдаёт сессию через `/api/auth` на том же адресе.
 
-## Stack
+## Стек
 
 - React 18 + TypeScript + Vite
-- Tailwind CSS, TanStack Query, and React Router
-- Telegram Mini App SDK and Telegram Login Widget
+- Tailwind CSS, TanStack Query и React Router
+- Telegram Mini App SDK и Telegram Login Widget
 
-## Visual design
+## Визуальная система
 
-The dashboard uses light white and gray surfaces, system fonts, and a simple layout. Primary actions and text remain legible on mobile and larger screens.
+Интерфейс использует светлые белые и серые поверхности, системный шрифт и простую структуру дашборда. Основные действия и текст сохраняют контраст на мобильных и больших экранах.
 
-- The overview shows workspace status, active mentions, and chats.
-- The inbox groups mentions by chat and provides reply, archive, and Telegram links.
-- Mention context displays the messages before and after the mention.
-- Capture controls let users choose `mentions` or `full` per subscription and view the full feed after enabling it.
-- Common actions use brief feedback; movement is removed when `prefers-reduced-motion` is enabled.
-- The interface does not claim unimplemented LLM capabilities; TG Flow is a bridge between Telegram signals and future LLM workflows.
+- Главная страница показывает состояние рабочего пространства, активные упоминания и чаты.
+- Inbox группирует упоминания по чатам и сохраняет доступ к ответу, архивированию и переходу в Telegram.
+- Контекст упоминания отображается как последовательность сообщений до и после сигнала.
+- При добавлении бота в группу человек, добавивший его, автоматически получает подписку `full` (All messages). В Chats можно выбрать Mentions + context, All messages или Disable subscription; выключенные подписки остаются в списке и включаются обратно явным выбором режима.
+- У частых действий нет затяжной анимации: кнопки получают короткий feedback, а при `prefers-reduced-motion` убираются перемещения.
+- Новые LLM-возможности не заявляются интерфейсом, пока они не реализованы; TG Flow позиционируется как мост между Telegram-сигналами и будущими LLM-workflows.
 
-## Development
+## Подключение группы
+
+Добавьте бота в группу с вашего Telegram-аккаунта: подписка на все новые сообщения создаётся автоматически для человека, добавившего бота. Команда `/subscribe` для этого не нужна. Боту нужен доступ к сообщениям группы: отключите Privacy Mode в BotFather и пере-добавьте бота либо назначьте его администратором.
+
+Если группа уже была добавлена до появления автоматической подписки и у неё ещё нет владельца подписки, удалите и добавьте бота один раз. Настройки существующих подписок, включая отключённые, автоматически не сбрасываются. Управляйте сбором на странице Chats. Режим All messages сохраняет новые сообщения; он не определяет личные непрочитанные сообщения Telegram и не определяет, было ли саммари успешно создано. Для этого используется отдельная отметка прочтения TG Flow, описанная ниже.
+
+## Личные переписки через Telegram Business
+
+TG Flow поддерживает отдельный источник личных переписок, выбранных владельцем подключённого Telegram-аккаунта. Групповой бот продолжает работать прежним способом. Включите Secretary/Business Mode для бота в BotFather, затем в настройках своего аккаунта Telegram подключите этого бота к выбранным личным чатам. Вход на сайт и OAuth-подключение ChatGPT сами по себе доступ к перепискам не предоставляют. [Инструкция Telegram](https://core.telegram.org/bots/features#business-bots).
+
+На странице Chats откройте «Connect personal chats with Telegram Business» для инструкции подключения, доступной даже до появления первого чата. После нового сообщения в выбранной переписке обновите Chats. Карточка личного чата отмечена как «Private chat · Telegram Business» и показывает Connected / Disconnected. Доступны All messages, Disable subscription и обычная отметка Mark as read; Mentions + context для личных чатов отсутствует. В личных переписках сохраняются новые входящие и исходящие тексты/подписи с учётом доставленных правок и удалений. Старая история и файлы не импортируются.
+
+Состояние подключения и режим сбора различаются: отключение бота в Telegram прекращает новый сбор, но владелец может читать ранее собранную историю в режиме full и отмечать её обработанной. Режим disabled скрывает полную ленту до включения full; для личных Business-чатов включение сохраняет ранее собранный архив и отметку прочтения, а сообщения за время отключения не восстанавливаются. Для включения сбора подключение должно быть активно. Повторное подключение не включает подписки, которые пользователь выключил в TG Flow. Переписки разных владельцев изолированы, даже если собеседник один и тот же. Ссылки `t.me/c/…` по внутренним ID личных чатов не формируются.
+
+Mark as read меняет только общую с MCP отметку TG Flow, не прочтение в Telegram. Автоматический сбор сообщений сам ничего не отправляет; явные ответы от имени аккаунта описаны ниже. Если Telegram не доставил первоначальное событие подключения, неизвестные события сообщений не принимаются: попробуйте отключить и подключить бота заново в настройках Telegram. После глобального сброса Telegram update ID из-за длительного простоя бота может потребоваться новый ID подключения или помощь оператора; повторное подключение не гарантирует смену ID. Настройка описана также в [корневом README](../README.md#connect-private-conversations-with-telegram-business). Сбор личных сообщений уже развёрнут на VPS и проверен с реальным подключением и чтением через MCP; явные ответы также развёрнуты 3 ноября 2026 года, но реальная отправка ещё не проверена.
+
+### Ответ в личной переписке
+
+В активном Business-чате с включённым **All messages** нажмите **Reply** у сохранённого сообщения. Форма показывает получателя и исходное сообщение и предупреждает, что ответ отправляется от вашего Telegram-аккаунта. Введите 1–4096 символов и нажмите **Send as me**. Enter в поле вводит новую строку и сам ничего не отправляет. Telegram требует разрешение `can_reply` и входящее сообщение в этом чате за последние 24 часа; сервер проверяет текущие права перед отправкой.
+
+Каждая попытка имеет UUID и серверную защиту от повторной отправки под тем же ID. **Check delivery** читает сохранённый результат и ничего не отправляет. Если результат неизвестен или попытка ещё выполняется, проверьте Telegram перед действием **I’ve checked Telegram — start a new reply**: новый ID означает отдельную отправку и при ранее доставленном сообщении может создать дубль. Определённый отказ сохраняет черновик; **Edit and try a new attempt** начинает новую попытку. Неопределённый результат не означает, что сообщение не доставлено.
+
+Черновики сохраняются в памяти при переключении чата или исходного сообщения. В `sessionStorage` этой вкладки сохраняются только UUID и минимальные сведения о результате, без текста черновика или исходного сообщения. Если браузер не позволяет сохранить и прочитать эти сведения перед отправкой, POST блокируется, черновик остаётся на месте и показывается ошибка с вариантом включить хранилище вкладки или ответить непосредственно в Telegram. При ошибке первоначального чтения включите хранилище и перезагрузите страницу перед отправкой: это позволяет восстановить прежние попытки вместо перезаписи их пустым набором. После перезагрузки известная неопределённая попытка восстанавливается с заблокированным пустым полем и проверяется без новой отправки.
+
+Известное ограничение: после перезагрузки форма такой попытки недоступна, если чат отключён, Business-подключение неактивно или исходное сообщение не попало в видимую страницу ленты. Сохранённый результат по-прежнему можно получить через MCP `get_chat_reply_status(chat_id, request_id)` или `GET /api/chats/{chat_id}/reply-attempts/{request_id}` с прежним UUID. Эти проверки требуют чтения и не создают попытку. Отсутствие результата не доказывает, что сообщение не было доставлено: сначала проверьте Telegram, не создавайте новый ID для автоматического повтора.
+
+При успехе обновляется лента нужного чата. Если Telegram не смог прикрепить ответ к исчезнувшему исходному сообщению, интерфейс сообщает об отправке отдельного сообщения. Отправка не меняет Mark as read или прочтение Telegram. Миграция 6 и обновление backend/frontend развёрнуты на VPS 3 ноября 2026 года; реальная отправка ещё не проверена. [Порядок развёртывания](../docs/vps-deployment.md#private-business-replies--deployment-and-setup).
+
+## Запуск
 
 ```bash
 npm install
@@ -30,46 +58,46 @@ npm run build
 npm run preview
 ```
 
-## Environment variables
+## Переменные окружения
 
-If needed, create `.env` in the `tg_flow_frontend` directory using [.env.example](.env.example):
+При необходимости создайте `.env` в корне `tg_flow_frontend` по [.env.example](.env.example):
 
 ```dotenv
 VITE_BOT_USERNAME=your_bot_username
 ```
 
-In development, the Bot API defaults to `http://localhost:8081`. Production builds default to same-origin `/api/...` paths, which the frontend server must proxy to the Bot API. To use another address, set `VITE_API_URL`, for example `https://bot.example.com`. The authentication URL is derived by appending `/api/auth`; override it with `VITE_AUTH_API_URL` if needed. Explicit values apply in development and production.
+В режиме разработки Bot API по умолчанию находится по адресу `http://localhost:8081`. В production-сборке по умолчанию используются пути `/api/...` на том же origin, что и фронтенд; сервер фронтенда должен проксировать их в Bot API. Для другого адреса задайте `VITE_API_URL`, например `https://bot.example.com`. Адрес авторизации формируется из него с добавлением `/api/auth`; при необходимости его можно переопределить через `VITE_AUTH_API_URL`. Явные значения действуют и при разработке, и в production.
 
-Vite embeds `VITE_*` values at build time. Local `.env` files are excluded from the Docker build context; pass values if needed using `docker build --build-arg VITE_API_URL=https://bot.example.com --build-arg VITE_BOT_USERNAME=your_bot_username .`. Changing `VITE_*` only when starting a container does not change an already-built frontend.
+`VITE_*` значения встраиваются Vite во время сборки. Локальные `.env` файлы исключены из контекста Docker; при необходимости передайте значения через `docker build --build-arg VITE_API_URL=https://bot.example.com --build-arg VITE_BOT_USERNAME=your_bot_username .`. Смена `VITE_*` только при запуске контейнера уже собранный фронтенд не изменит.
 
-## Routes and authentication
+## Маршруты и авторизация
 
-| Route | Purpose |
+| Маршрут | Назначение |
 | --- | --- |
-| `/` | Overview and entry point |
-| `/login` | Telegram Login Widget sign-in in a browser |
-| `/mentions` | Saved mentions and statistics |
-| `/mentions/:mentionId` | Context, reply, and archive for a mention |
-| `/chats` | Subscription modes and the full feed for chats with `full` enabled |
+| `/` | Главная страница и точка входа |
+| `/login` | Вход через Telegram Login Widget в обычном браузере |
+| `/mentions` | Список и статистика сохранённых упоминаний |
+| `/mentions/:mentionId` | Контекст, ответ и архивирование конкретного упоминания |
+| `/chats` | Режимы подписок и полная лента чатов с включённым `full` |
 
-- The Telegram Mini App sends complete `initData`, which the Bot API checks for authenticity and freshness.
-- In a browser, the Telegram Login Widget sends signed data to the same service.
-- After verification, the frontend uses a short-lived access token and refreshes it with a refresh token. The mentions screen does not replace unauthenticated users with a test profile.
-- Bot API requests act on behalf of the current user; the server enforces user-level data isolation.
-- Switching to `full` exposes new messages saved after the switch. Switching back to `mentions` immediately closes access to the full feed.
+- В Telegram Mini App передаётся полный `initData`, который Bot API проверяет на подлинность и свежесть.
+- В браузере Telegram Login Widget передаёт подписанные данные в тот же сервис.
+- После успешной проверки фронтенд использует короткоживущий access token и обновляет его через refresh token. Экран упоминаний не подменяет неаутентифицированного пользователя тестовым профилем.
+- Запросы к Bot API выполняются от имени текущего пользователя; сервер сам применяет изоляцию данных по пользователю.
+- Для групп при переключении в `full` лента начинается с новых сообщений, сохранённых после переключения. В личных Business-чатах возврат в `full` сохраняет ранее собранную историю и отметку прочтения. Переход в `mentions` (только группы) или `disabled` сразу закрывает доступ к полной ленте и очищает её клиентский кеш. `disabled` прекращает сбор новых сообщений и упоминаний для этой подписки. Кнопка Re-enable · All messages явно включает сбор снова; сообщения за время отключения не восстанавливаются.
 
-See the [Bot service README](../tg_flow_bot/README.md) for REST operations and the access model. External AI clients should use the separate OAuth-protected MCP/CLI interface described in [MCP_AND_CLI.md](../MCP_AND_CLI.md), not browser tokens.
+REST-операции и модель доступа описаны в [README Bot service](../tg_flow_bot/README.md). Для внешних AI-клиентов используйте отдельный OAuth-защищённый MCP/CLI интерфейс из [MCP_AND_CLI.md](../MCP_AND_CLI.md), а не браузерные токены фронтенда.
 
-## Structure
+## Структура
 
 ```text
 src/
-├── App.tsx                 # Routes and protected pages
-├── contexts/AuthContext.tsx # Session state and Telegram sign-in
-├── hooks/useTelegram.ts     # Telegram WebApp integration
-├── lib/api.ts               # Bot API client and session refresh
-├── lib/auth.ts              # Bot API authentication client
-└── pages/                   # Overview, login, mentions, context, and chat modes
+├── App.tsx                 # Маршруты и защищённые страницы
+├── contexts/AuthContext.tsx # Состояние сессии и вход Telegram
+├── hooks/useTelegram.ts     # Интеграция с Telegram WebApp
+├── lib/api.ts               # Клиент Bot API и обновление сессии
+├── lib/auth.ts              # Клиент авторизации Bot API
+└── pages/                   # Главная, вход, упоминания, контекст и режимы чатов
 ```
 
 ## Docker
@@ -79,10 +107,18 @@ docker build -t tg-flow-web .
 docker run --add-host=host.docker.internal:host-gateway -p 3000:80 tg-flow-web
 ```
 
-By default, nginx proxies `/api/`, `/oauth`, `/oauth/`, `/.well-known/`, and the exact path `/mcp` to `http://host.docker.internal:8081`. MCP uses HTTP/1.1 without response buffering for Streamable HTTP. The example above reaches the Bot API on the host; if the bot is on another network or container, specify an address reachable from the container, for example `-e BOT_API_UPSTREAM=http://bot:8081`. Use an origin without a trailing `/` or path.
+Nginx проксирует `/api/`, `/oauth`, `/oauth/`, `/.well-known/` и точный путь `/mcp` в `http://host.docker.internal:8081` по умолчанию. Для MCP включён HTTP/1.1 без буферизации ответа, чтобы работал Streamable HTTP. Пример выше направляет запросы к Bot API на хосте; если бот находится в другой сети или контейнере, задайте доступный из контейнера адрес, например `-e BOT_API_UPSTREAM=http://bot:8081`. Указывайте origin без конечного `/` и пути.
 
-Nginx forwards the original `Host`, including its port (for example, `localhost:3000`); for HTTP/1.0 without `Host`, it uses the nginx server name. Restrict allowed public hosts in Bot/Auth: `MCP_ALLOWED_HOSTS` includes the port, while Django's `ALLOWED_HOSTS` checks the hostname. Nginx syntax validation is not a trusted-domain allowlist.
+Nginx передаёт исходный `Host` вместе с портом (например, `localhost:3000`); для HTTP/1.0 без `Host` используется имя сервера nginx. Допустимые публичные адреса необходимо ограничить в Bot/Auth: `MCP_ALLOWED_HOSTS` учитывает порт, а Django `ALLOWED_HOSTS` проверяет имя хоста. Проверка синтаксиса nginx не является списком доверенных доменов.
 
-By default, nginx does not trust incoming `X-Forwarded-Proto` and forwards its own connection scheme. If HTTPS terminates at another reverse proxy, specify the addresses of its direct connections to nginx using `TRUSTED_PROXY_RULES`, for example `-e 'TRUSTED_PROXY_RULES=10.20.0.5/32 1; 2001:db8::5/128 1;'`. Each entry is an IP address or CIDR in nginx geo format followed by `1;`; the default list is empty. Use only trusted proxy addresses as seen by nginx after network translation, and restrict access to the container. The trusted proxy must overwrite, not append to, the client's `X-Forwarded-Proto`. Only a single `http` or `https` value is accepted from such sources; missing or invalid values fall back to the nginx connection scheme. Do not trust shared networks or all addresses, or clients could spoof the scheme. Bot/Auth must also trust forwarded headers only from this nginx; otherwise HTTPS redirects can loop or the scheme can be spoofed through direct service access.
+По умолчанию nginx не доверяет входящему `X-Forwarded-Proto` и передаёт собственную схему соединения. Если HTTPS завершается на другом обратном прокси, укажите адреса его непосредственных соединений с nginx через `TRUSTED_PROXY_RULES`, например `-e 'TRUSTED_PROXY_RULES=10.20.0.5/32 1; 2001:db8::5/128 1;'`. Каждый элемент — IP-адрес или CIDR в формате nginx geo, затем `1;`; без настройки список пуст. Используйте только адреса доверенных прокси, видимые nginx после сетевых преобразований, и ограничьте доступ к контейнеру: доверенный прокси обязан перезаписывать, а не добавлять клиентский `X-Forwarded-Proto`. Из такого источника принимается только единственное значение `http` или `https`; отсутствующее или некорректное значение заменяется схемой соединения с nginx. Не доверяйте общим сетям или всем адресам: иначе клиент сможет подделать схему. Bot/Auth также должны доверять заголовкам только от этого nginx; иначе HTTPS-редиректы могут зациклиться или схему можно будет подделать при прямом доступе к сервису.
 
-The Vite development server calls the local Bot API directly, so no development proxy is required. Run `npm run test:proxy` to test routing, streaming, and trusted-scheme handling with a test upstream (requires Docker).
+Vite dev server обращается к локальному Bot API напрямую, поэтому dev proxy не требуется. Для проверки маршрутизации, потоковой передачи и доверенной схемы с тестовым upstream запустите `npm run test:proxy` (требуется Docker).
+
+## Непрочитанные сообщения TG Flow
+
+В Chats у подписки показан счётчик непрочитанных. Для выбранной группы All messages загружается фиксированный снимок новых сообщений после сохранённой отметки; Preview unread messages показывает до 200 самых старых сообщений снимка. Открытие группы ничего не отмечает прочитанным.
+
+Кнопка Mark as read явно подтверждает все сообщения до границы уже загруженного снимка, а не до последнего сообщения на сервере в момент нажатия. Если снимок содержит больше 200 сообщений, интерфейс предупреждает, что отметка включает и не показанную часть. Новые сообщения после границы остаются непрочитанными. Refresh unread получает новый снимок. При ошибке отметка не меняется.
+
+Это собственная отметка TG Flow, независимая от Telegram и архивирования упоминаний. Для GPT-саммари клиент должен получить и прочитать все страницы фиксированного снимка, создать саммари и только после явного подтверждения отметить эту границу через MCP. Неудачное или частичное саммари не должно двигать отметку.

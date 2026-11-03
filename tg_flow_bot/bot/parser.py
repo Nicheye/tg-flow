@@ -1,4 +1,5 @@
 import logging
+from datetime import UTC, datetime
 
 from telegram import Update
 from telegram.ext import ContextTypes
@@ -15,7 +16,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         return
 
     chat = update.effective_chat
-    if chat.type == "private":
+    if not chat or chat.type not in {"group", "supergroup"}:
         return
 
     text = message.text or message.caption
@@ -25,6 +26,13 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         logger.warning("Message %s in chat %s has no sender", message.message_id, chat.id)
         return
     sender_username = getattr(sender, "username", None) or getattr(sender, "title", None)
+
+    subscriptions = await UserChatSubscription.filter(
+        chat_id=chat.id, capture_mode__in=["mentions", "full"]
+    )
+    if not subscriptions:
+        return
+    active_ids = [item.id for item in subscriptions]
 
     db_chat, chat_created = await Chat.get_or_create(
         id=chat.id,
@@ -43,7 +51,6 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
     # Mention mode needs the stream for surrounding context; full mode exposes
     # that same stream as a complete, paginated conversation.
-    subscriptions = await UserChatSubscription.filter(chat_id=chat.id)
 
     chat_message, created = await ChatMessage.get_or_create(
         chat=db_chat,
@@ -56,14 +63,26 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         },
     )
     if not created:
-        chat_message.from_user_id = sender.id
-        chat_message.from_username = sender_username
-        chat_message.text = text
-        chat_message.message_date = message.date
-        await chat_message.save()
+        changed = (
+            chat_message.from_user_id != sender.id
+            or chat_message.from_username != sender_username
+            or chat_message.text != text
+            or chat_message.message_date != message.date
+        )
+        if changed:
+            chat_message.from_user_id = sender.id
+            chat_message.from_username = sender_username
+            chat_message.text = text
+            chat_message.message_date = message.date
+            # Effective capture/update time: disabled readers cannot see later
+            # versions of a shared row captured by another active subscriber.
+            chat_message.saved_at = datetime.now(UTC)
+            await chat_message.save()
 
     if not entities:
-        await MentionedMessage.filter(chat_message=chat_message).delete()
+        await MentionedMessage.filter(
+            chat_message=chat_message, subscription_id__in=active_ids
+        ).delete()
         return
 
     mentioned_targets: list[tuple[str, str | int]] = []
@@ -73,11 +92,13 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 continue
             username = text[entity.offset : entity.offset + entity.length]
             mentioned_targets.append(("username", username.lstrip("@")))
-        elif entity.type == "text_mention":  # mention without a username
+        elif entity.type == "text_mention":  # mention без username
             mentioned_targets.append(("user_id", entity.user.id))
 
     if not mentioned_targets:
-        await MentionedMessage.filter(chat_message=chat_message).delete()
+        await MentionedMessage.filter(
+            chat_message=chat_message, subscription_id__in=active_ids
+        ).delete()
         return
 
     logger.debug("Found mentions: %s in chat %s", mentioned_targets, chat.id)
@@ -96,7 +117,9 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         )
     }
 
-    existing_mentions = await MentionedMessage.filter(chat_message=chat_message)
+    existing_mentions = await MentionedMessage.filter(
+        chat_message=chat_message, subscription_id__in=active_ids
+    )
     retained_subscription_ids: set[int] = set()
     for existing in existing_mentions:
         if (

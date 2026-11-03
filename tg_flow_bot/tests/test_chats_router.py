@@ -199,3 +199,45 @@ async def test_switching_back_to_mentions_closes_full_feed(client, subscription)
     assert changed.status_code == HTTPStatus.OK
     assert changed.json()["capture_mode"] == "mentions"
     assert feed.status_code == HTTPStatus.FORBIDDEN
+
+
+@pytest.mark.asyncio
+async def test_disable_preserves_data_and_remains_listed(client, subscription, mentions):
+    changed = await client.patch(
+        f"/api/chats/{subscription.chat_id}/mode", json={"capture_mode": "disabled"}
+    )
+    assert changed.status_code == 200
+    await subscription.refresh_from_db()
+    assert subscription.capture_mode == "disabled"
+    from models import MentionedMessage
+
+    assert await MentionedMessage.filter(subscription=subscription).count() == len(mentions)
+    listed = await client.get("/api/chats/")
+    assert listed.json()[0]["capture_mode"] == "disabled"
+    assert (await client.get(f"/api/chats/{subscription.chat_id}/messages")).status_code == 403
+    changed = await client.patch(
+        f"/api/chats/{subscription.chat_id}/mode", json={"capture_mode": "full"}
+    )
+    assert changed.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_disable_cannot_change_other_users_subscription(client, chat):
+    other = await UserChatSubscription.create(
+        user_id=999, tg_user_id=999, chat=chat, capture_mode="full"
+    )
+    changed = await client.patch(f"/api/chats/{chat.id}/mode", json={"capture_mode": "disabled"})
+    assert changed.status_code == 404
+    await other.refresh_from_db()
+    assert other.capture_mode == "full"
+
+
+@pytest.mark.asyncio
+async def test_read_scope_cannot_disable(client, auth_user, subscription):
+    auth_user.scopes = ["mentions:read"]
+    changed = await client.patch(
+        f"/api/chats/{subscription.chat_id}/mode", json={"capture_mode": "disabled"}
+    )
+    assert changed.status_code == 403
+    await subscription.refresh_from_db()
+    assert subscription.capture_mode == "mentions"

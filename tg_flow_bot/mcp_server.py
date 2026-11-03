@@ -21,14 +21,28 @@ from telegram import Bot
 from config import settings
 from models import ChatMessage, MentionedMessage, UserChatSubscription
 from schemas import MentionWithLink
-from services.security import TokenPayload, protected_resource_metadata_url, verify_token
 from services.auth_transport import auth_http_client, auth_url
+from services.business_access import owned_subscription, owns_subscription, source_metadata
+from services.business_reply import (
+    BusinessReplyError,
+    get_business_reply_status,
+    send_business_reply,
+)
+from services.chat_unread import (
+    ChatUnreadError,
+    list_unread,
+    mark_read,
+    unread_count,
+    visible_messages,
+)
+from services.mention_context import mention_context_messages
+from services.security import TokenPayload, protected_resource_metadata_url, verify_token
 
 logger = logging.getLogger(__name__)
 
 READ_SCOPE = "mentions:read"
 WRITE_SCOPE = "mentions:write"
-WRITE_TOOLS = frozenset(("archive_mention", "reply_to_mention"))
+WRITE_TOOLS = frozenset(("archive_mention", "reply_to_mention", "mark_chat_read", "reply_to_chat_message"))
 
 
 class AuthServiceTokenVerifier(TokenVerifier):
@@ -251,7 +265,12 @@ def create_mcp_server() -> tuple[MCPServer, AuthServiceTokenVerifier]:
         ),
         instructions=(
             "Use read tools to inspect mentions. Before archive or reply operations, explain the "
-            "effect and obtain the user's confirmation. Never infer a mention ID from another user."
+            "effect and obtain the user's confirmation. Never infer a mention ID from another user. "
+            "For requested chat summaries, read all pages of a fixed unread snapshot, summarize "
+            "successfully, then mark only its processed boundary read without an extra confirmation. "
+            "Reading alone never marks read; failed summaries must not advance the checkpoint. "
+            "Business private replies send from the user's account. Before reply_to_chat_message, "
+            "show the exact recipient and text and get explicit user approval; only then pass confirmed=true."
         ),
         version="1.0.0",
         token_verifier=verifier,
@@ -308,10 +327,16 @@ def create_mcp_server() -> tuple[MCPServer, AuthServiceTokenVerifier]:
                 "chat_id": subscription.chat_id,
                 "chat_title": subscription.chat.title,
                 "chat_username": subscription.chat.username,
+                "chat_type": subscription.chat.chat_type,
+                **await source_metadata(subscription.chat),
                 "capture_mode": subscription.capture_mode,
                 "capture_mode_changed_at": subscription.capture_mode_changed_at.isoformat(),
+                "read_through_message_id": subscription.read_through_message_id,
+                "last_read_at": subscription.last_read_at.isoformat() if subscription.last_read_at else None,
+                "unread_count": await unread_count(subscription),
             }
             for subscription in subscriptions
+            if await owns_subscription(subscription, principal.user_id)
         ]
 
     @server.tool(
@@ -328,22 +353,70 @@ def create_mcp_server() -> tuple[MCPServer, AuthServiceTokenVerifier]:
         _require_scope(principal, READ_SCOPE)
         if not 1 <= limit <= 200:
             raise ToolError("limit must be between 1 and 200")
-        subscription = await UserChatSubscription.get_or_none(
-            user_id=principal.user_id,
-            chat_id=chat_id,
-        )
+        subscription = await owned_subscription(principal.user_id, chat_id)
         if subscription is None:
             raise ToolError("Chat subscription not found")
         if subscription.capture_mode != "full":
             raise ToolError("Full-chat mode is not enabled for this chat")
-        query = ChatMessage.filter(
-            chat_id=chat_id,
-            saved_at__gte=subscription.capture_mode_changed_at,
-        )
+        query = await visible_messages(subscription)
         if before_message_id is not None:
             query = query.filter(message_id__lt=before_message_id)
         messages = await query.order_by("-message_id").limit(limit)
         return [_message_dict(message) for message in reversed(messages)]
+
+    @server.tool(
+        title="List unread chat messages",
+        annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, openWorldHint=False),
+    )
+    async def list_unread_chat_messages(
+        chat_id: int, limit: int = 100, after_message_id: int | None = None,
+        through_message_id: int | None = None, capture_mode_changed_at: datetime | None = None,
+    ) -> dict:
+        """Read new messages since the caller's last summary checkpoint, without marking read.
+
+        First page freezes snapshot_through_message_id. Read every page using that fixed
+        through_message_id, next_after_message_id and capture_mode_changed_at. Summarize
+        the requested messages successfully, then explicitly mark_chat_read through the
+        snapshot boundary. For a partial summary mark only the last actually processed
+        message, never the newest message at marking time. Failed summaries never mark.
+        """
+        principal = await _principal()
+        _require_scope(principal, READ_SCOPE)
+        try:
+            result = await list_unread(principal.user_id, chat_id, limit, after_message_id,
+                                       through_message_id, capture_mode_changed_at)
+        except ChatUnreadError as error:
+            raise ToolError(str(error)) from error
+        result["messages"] = [_message_dict(row) for row in result["messages"]]
+        result["capture_mode_changed_at"] = result["capture_mode_changed_at"].isoformat()
+        return result
+
+    @server.tool(
+        title="Mark chat messages read",
+        annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False,
+                                    idempotentHint=True, openWorldHint=False),
+    )
+    async def mark_chat_read(chat_id: int, through_message_id: int, capture_mode_changed_at: datetime) -> dict:
+        """Advance the caller's local summary checkpoint through an observed message.
+
+        Only after a successful requested summary, acknowledge its fully processed snapshot
+        (or explicitly its last processed message). User-requested summary workflows may
+        do this without an additional archive/reply confirmation. Never mark on failed or
+        incomplete processing. This changes only the local unread checkpoint; it does not
+        archive, delete, send messages, or change Telegram read receipts.
+        """
+        principal = await _principal()
+        _require_scope(principal, WRITE_SCOPE)
+        try:
+            subscription = await mark_read(principal.user_id, chat_id, through_message_id,
+                                           capture_mode_changed_at)
+        except ChatUnreadError as error:
+            raise ToolError(str(error)) from error
+        return {
+            "read_through_message_id": subscription.read_through_message_id,
+            "last_read_at": subscription.last_read_at.isoformat() if subscription.last_read_at else None,
+            "unread_count": await unread_count(subscription),
+        }
 
     @server.tool(
         title="Mention statistics",
@@ -380,20 +453,11 @@ def create_mcp_server() -> tuple[MCPServer, AuthServiceTokenVerifier]:
         if not 0 <= before <= 50 or not 0 <= after <= 50:
             raise ToolError("before and after must each be between 0 and 50")
         mention = await _get_owned_mention(principal.user_id, mention_id)
-        previous = (
-            await ChatMessage.filter(chat_id=mention.chat_id, message_id__lt=mention.message_id)
-            .order_by("-message_id")
-            .limit(before)
-        )
-        following = (
-            await ChatMessage.filter(chat_id=mention.chat_id, message_id__gt=mention.message_id)
-            .order_by("message_id")
-            .limit(after)
-        )
+        previous, following = await mention_context_messages(mention, before, after)
 
         return {
             "mention": _mention_dict(mention),
-            "before": [_message_dict(message) for message in reversed(previous)],
+            "before": [_message_dict(message) for message in previous],
             "after": [_message_dict(message) for message in following],
         }
 
@@ -409,6 +473,53 @@ def create_mcp_server() -> tuple[MCPServer, AuthServiceTokenVerifier]:
         mention.is_archived = archived
         await mention.save(update_fields=("is_archived",))
         return _mention_dict(mention)
+
+    @server.tool(
+        title="Check private reply delivery",
+        annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False,
+                                    openWorldHint=False),
+    )
+    async def get_chat_reply_status(chat_id: int, request_id: str) -> dict:
+        """Read an existing reply attempt without sending or creating an attempt.
+
+        Use after an uncertain response. A missing attempt is not proof of
+        non-delivery if the original request may still be in flight. Check
+        Telegram before approving a new attempt. This never retries delivery.
+        """
+        principal = await _principal()
+        _require_scope(principal, READ_SCOPE)
+        try:
+            return await get_business_reply_status(principal.user_id, chat_id, request_id)
+        except BusinessReplyError as error:
+            raise ToolError(str(error)) from error
+
+    @server.tool(
+        title="Reply in a Business private chat",
+        annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True,
+                                    idempotentHint=True, openWorldHint=True),
+    )
+    async def reply_to_chat_message(
+        chat_id: int, message_id: int, text: str, request_id: str, confirmed: bool = False
+    ) -> dict:
+        """Send an explicitly approved reply FROM the connected Telegram account.
+
+        Show the recipient and exact message text to the user and obtain approval
+        before setting confirmed=true. Use the internal chat_id and a captured
+        message_id. Generate a UUID request_id for this approved attempt and reuse
+        it for every status retry: the same key never sends twice. Unknown delivery
+        requires checking Telegram before the user approves any NEW attempt/key.
+        Telegram requires reply permission and incoming activity in the last 24h.
+        If the target disappeared Telegram may send a standalone message instead;
+        inspect reply_attached. Never mark read or archive as part of this action.
+        """
+        principal = await _principal()
+        _require_scope(principal, WRITE_SCOPE)
+        if not confirmed:
+            raise ToolError("Explicit user approval of the recipient and exact text is required")
+        try:
+            return await send_business_reply(principal.user_id, chat_id, message_id, text, request_id)
+        except BusinessReplyError as error:
+            raise ToolError(str(error)) from error
 
     @server.tool(
         title="Reply to a mention",
@@ -429,6 +540,8 @@ def create_mcp_server() -> tuple[MCPServer, AuthServiceTokenVerifier]:
         if not reply_text or len(reply_text) > 4096:
             raise ToolError("Reply text must contain 1-4096 characters")
         mention = await _get_owned_mention(principal.user_id, mention_id)
+        if mention.chat.business_connection_id is not None or mention.chat.chat_type == "private":
+            raise ToolError("Business messages do not support replies through mention tools")
         if mention.is_archived:
             raise ToolError("Mention is archived")
         try:

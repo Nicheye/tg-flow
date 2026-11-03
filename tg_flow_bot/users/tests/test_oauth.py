@@ -1,5 +1,6 @@
 import base64
 import hashlib
+import re
 import secrets
 from urllib.parse import parse_qs, urlsplit
 
@@ -70,6 +71,72 @@ def exchange_code(api_client, oauth_client, settings, code, verifier):
     )
 
 
+def start_browser_authorization(client, oauth_client, settings):
+    _, challenge = pkce_pair()
+    return client.get("/oauth/authorize", {
+        "response_type": "code", "client_id": oauth_client.client_id,
+        "redirect_uri": oauth_client.redirect_uris[0], "resource": settings.MCP_RESOURCE_URI,
+        "scope": "mentions:read", "code_challenge": challenge,
+        "code_challenge_method": "S256", "state": "browser-fixture-state",
+    })
+
+
+def test_web_session_uses_verified_jwt_subject_and_preserves_pending_consent(
+    api_client, user, oauth_client, settings
+):
+    from rest_framework_simplejwt.tokens import RefreshToken
+
+    assert start_browser_authorization(api_client, oauth_client, settings).status_code == 200
+    pending = dict(api_client.session["oauth_request"])
+    access = str(RefreshToken.for_user(user).access_token)
+    response = api_client.post("/oauth/session/web", {"user_id": user.pk + 1},
+                               format="json", HTTP_AUTHORIZATION=f"Bearer {access}")
+    assert response.status_code == 200
+    assert api_client.session["_auth_user_id"] == str(user.pk)
+    assert api_client.session["oauth_request"] == pending
+    assert not OAuthAuthorizationCode.objects.exists(), "Login must not bypass consent"
+
+
+@pytest.mark.parametrize("authorization", ["", "Bearer invalid-token"])
+def test_web_session_rejects_missing_or_invalid_jwt(api_client, oauth_client, settings, authorization):
+    start_browser_authorization(api_client, oauth_client, settings)
+    response = api_client.post("/oauth/session/web", HTTP_AUTHORIZATION=authorization)
+    assert response.status_code == 401
+    assert "_auth_user_id" not in api_client.session
+
+
+def test_web_session_requires_csrf(user, oauth_client, settings):
+    from rest_framework.test import APIClient
+    from rest_framework_simplejwt.tokens import RefreshToken
+
+    client = APIClient(enforce_csrf_checks=True)
+    start_browser_authorization(client, oauth_client, settings)
+    access = str(RefreshToken.for_user(user).access_token)
+    assert client.post("/oauth/session/web", HTTP_AUTHORIZATION=f"Bearer {access}").status_code == 403
+    csrf = client.cookies["csrftoken"].value
+    assert client.post("/oauth/session/web", HTTP_AUTHORIZATION=f"Bearer {access}",
+                       HTTP_X_CSRFTOKEN=csrf).status_code == 200
+
+
+def test_web_session_requires_pending_oauth_request(api_client, user):
+    from rest_framework_simplejwt.tokens import RefreshToken
+
+    access = str(RefreshToken.for_user(user).access_token)
+    response = api_client.post("/oauth/session/web", HTTP_AUTHORIZATION=f"Bearer {access}")
+    assert response.status_code == 400
+
+
+def test_web_session_rejects_inactive_user(api_client, user, oauth_client, settings):
+    from rest_framework_simplejwt.tokens import RefreshToken
+
+    start_browser_authorization(api_client, oauth_client, settings)
+    access = str(RefreshToken.for_user(user).access_token)
+    user.is_active = False
+    user.save()
+    assert api_client.post("/oauth/session/web", HTTP_AUTHORIZATION=f"Bearer {access}").status_code == 401
+    assert "_auth_user_id" not in api_client.session
+
+
 def introspection_auth(settings):
     value = base64.b64encode(
         f"{settings.MCP_INTROSPECTION_CLIENT_ID}:{settings.MCP_INTROSPECTION_CLIENT_SECRET}".encode()
@@ -85,6 +152,46 @@ def test_authorization_server_metadata(api_client, settings):
     assert data["code_challenge_methods_supported"] == ["S256"]
     assert data["authorization_response_iss_parameter_supported"] is True
     assert data["client_id_metadata_document_supported"] is False
+
+
+@pytest.mark.parametrize(
+    ("redirect", "origin"),
+    [
+        ("https://chatgpt.com/connector_platform/oauth/callback?client=fixture", "https://chatgpt.com"),
+        ("http://127.0.0.1:49152/callback", "http://127.0.0.1:49152"),
+        ("http://[::1]:49152/callback", "http://[::1]:49152"),
+    ],
+)
+def test_consent_csp_permits_only_the_registered_callback_origin(
+    api_client, user, oauth_client, settings, redirect, origin
+):
+    oauth_client.redirect_uris = [redirect]
+    oauth_client.save()
+    api_client.force_login(user)
+    _, challenge = pkce_pair()
+    response = api_client.get("/oauth/authorize", {
+        "response_type": "code", "client_id": oauth_client.client_id,
+        "redirect_uri": redirect, "resource": settings.MCP_RESOURCE_URI,
+        "scope": "mentions:read", "code_challenge": challenge,
+        "code_challenge_method": "S256", "state": "fixture-state",
+    })
+    assert response.status_code == 200
+    policy = re.search(
+        r'http-equiv="Content-Security-Policy" content="([^"]+)"',
+        response.content.decode(),
+    ).group(1)
+    assert policy.split("form-action ")[1] == f"'self' {origin}"
+
+
+@pytest.mark.parametrize("redirect", [
+    "https://example.com;form-action *;/callback",
+    "https://example.com:invalid/callback",
+])
+def test_registration_rejects_invalid_csp_origins(api_client, redirect):
+    response = api_client.post("/oauth/register", {
+        "client_name": "Invalid origin", "redirect_uris": [redirect],
+    }, format="json")
+    assert response.status_code == 400
 
 
 def test_dynamic_registration_accepts_loopback_public_client(db, api_client):

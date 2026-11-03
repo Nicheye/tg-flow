@@ -1,0 +1,104 @@
+name: tg-flow
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  db:
+    image: postgres:16-alpine@sha256:0cefaabd882e42bcb2a2f3dc56d3ce4770560ba62fd7f197f1a2e008fd5731ab
+    environment:
+      POSTGRES_DB: ${DB_NAME:?}
+      POSTGRES_USER: ${DB_USER:?}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?}
+    volumes:
+      - postgres:/var/lib/postgresql/data
+    networks: [database]
+    restart: unless-stopped
+    healthcheck:
+      test: [CMD-SHELL, 'pg_isready -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"']
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    logging: *logging
+
+  bot:
+    image: tg-flow-bot:vps-initial
+    build: ./src/tg_flow_bot
+    env_file:
+      - .env
+      - telegram.env
+    command: [uvicorn, 'main:app', --host, 0.0.0.0, --port, '8081', --no-proxy-headers, --no-access-log]
+    networks:
+      app:
+        ipv4_address: 172.30.40.3
+      database: {}
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+    logging: *logging
+
+  migrate:
+    image: tg-flow-bot:vps-initial
+    profiles: [maintenance]
+    env_file:
+      - .env
+      - telegram.env
+    networks: [database]
+    logging: *logging
+
+  web:
+    image: tg-flow-web:vps-initial
+    build:
+      context: ./src/tg_flow_frontend
+      args:
+        VITE_BOT_USERNAME: ${TELEGRAM_BOT_USERNAME:-}
+        VITE_API_URL: https://tg.mishanya.fun
+        VITE_AUTH_API_URL: https://tg.mishanya.fun/api/auth
+    environment:
+      BOT_API_UPSTREAM: http://bot:8081
+      TRUSTED_PROXY_RULES: ""
+    networks:
+      app:
+        ipv4_address: 172.30.40.4
+    restart: unless-stopped
+    logging: *logging
+
+  edge:
+    image: nginx:stable-alpine@sha256:0e52bd054126cdc040b1276c0af347aeb02a41b9cfe305d6094767ac30e97949
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/active.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./nginx/proxy.conf:/etc/nginx/tg-flow-proxy.conf:ro
+      - ./acme:/var/www/acme:ro
+      - ./letsencrypt:/etc/letsencrypt:ro
+    networks:
+      app:
+        ipv4_address: 172.30.40.2
+    restart: unless-stopped
+    logging: *logging
+
+  certbot:
+    image: certbot/certbot@sha256:bc93cb710b413e6b456d622f9b0133b3e109c0a78c2ed9976af43d209b0a1805
+    profiles: [maintenance]
+    volumes:
+      - ./acme:/var/www/acme
+      - ./letsencrypt:/etc/letsencrypt
+    logging: *logging
+
+volumes:
+  postgres:
+    name: tg_flow_postgres
+
+networks:
+  app:
+    ipam:
+      config:
+        - subnet: 172.30.40.0/28
+  database:
+    internal: true

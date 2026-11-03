@@ -1,0 +1,8 @@
+[Unit]
+Description=Renew TG Flow HTTPS certificate
+Requires=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/opt/tg-flow/bin/renew-tls

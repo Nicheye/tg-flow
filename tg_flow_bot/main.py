@@ -5,6 +5,7 @@ from asgiref.sync import sync_to_async
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from mcp.server.transport_security import TransportSecuritySettings
+from telegram import Update
 from telegram.ext import Application
 from tortoise import Tortoise
 
@@ -77,7 +78,7 @@ async def lifespan(app: FastAPI):
         bot_application = create_bot_application()
         await bot_application.initialize()
         await bot_application.start()
-        await bot_application.updater.start_polling(drop_pending_updates=True)
+        await bot_application.updater.start_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=False)
         logger.info("Bot started")
 
         yield

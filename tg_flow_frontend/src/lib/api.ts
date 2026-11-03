@@ -154,6 +154,18 @@ class ApiClient {
     )
   }
 
+  async getUnreadChatMessages(chatId: number, generation: string, initData?: string, signal?: AbortSignal) {
+    const params = new URLSearchParams({ limit: '200', capture_mode_changed_at: generation })
+    return this.request<UnreadChatMessages>(`/api/chats/${chatId}/unread?${params}`, { signal }, initData)
+  }
+
+  async markChatRead(chatId: number, throughMessageId: number, generation: string, initData?: string) {
+    return this.request<ChatSubscription>(`/api/chats/${chatId}/read`, {
+      method: 'POST',
+      body: JSON.stringify({ through_message_id: throughMessageId, capture_mode_changed_at: generation }),
+    }, initData)
+  }
+
   async getChatMessages(chatId: number, initData?: string, limit = 100) {
     const params = new URLSearchParams({ limit: limit.toString() })
     return this.request<ChatMessage[]>(
@@ -161,6 +173,17 @@ class ApiClient {
       {},
       initData
     )
+  }
+
+  async replyToChatMessage(chatId: number, messageId: number, text: string, requestId: string, initData?: string) {
+    return this.request<BusinessReplyResult>(`/api/chats/${chatId}/messages/${messageId}/reply`, {
+      method: 'POST',
+      body: JSON.stringify({ text, request_id: requestId }),
+    }, initData)
+  }
+
+  async getChatReplyAttempt(chatId: number, requestId: string, initData?: string) {
+    return this.request<BusinessReplyResult>(`/api/chats/${chatId}/reply-attempts/${requestId}`, {}, initData)
   }
 }
 
@@ -189,7 +212,7 @@ export interface ChatMessage {
   message_date: string
 }
 
-export type CaptureMode = 'mentions' | 'full'
+export type CaptureMode = 'mentions' | 'full' | 'disabled'
 
 export interface ChatSubscription {
   id: number
@@ -197,9 +220,25 @@ export interface ChatSubscription {
   title: string | null
   username: string | null
   chat_type: string
+  source: 'group' | 'business'
+  connection_active: boolean
+  telegram_chat_id: number | null
   capture_mode: CaptureMode
   capture_mode_changed_at: string
   subscribed_at: string
+  read_through_message_id: number
+  last_read_at: string | null
+  unread_count: number
+}
+
+export interface UnreadChatMessages {
+  messages: ChatMessage[]
+  read_through_message_id: number
+  snapshot_through_message_id: number
+  capture_mode_changed_at: string
+  next_after_message_id: number | null
+  has_more: boolean
+  unread_count: number
 }
 
 export interface MentionContextResponse {
@@ -218,6 +257,15 @@ export interface ReplyResponse {
   success: boolean
   message_id?: number
   error?: string
+}
+
+export interface BusinessReplyResult {
+  status: 'sent' | 'failed' | 'unknown'
+  request_id: string
+  message_id: number | null
+  reply_attached: boolean
+  error_code: string | null
+  error: string | null
 }
 
 export const api = new ApiClient(API_URL)
