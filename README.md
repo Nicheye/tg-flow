@@ -35,59 +35,222 @@ The prompt below is intended for an agent that can inspect the source and access
 
 ```text
 Help me deploy TG Flow on my VPS. I want a private self-hosted Telegram
-inbox and a remote MCP server accessible at https://<my-domain>/mcp.
-The workspace contains tg_flow_bot, tg_flow_frontend, and tg_flow_storage.
-Read their current source, README files, env examples, and MCP_AND_CLI.md.
-Use the exact checked-out revisions; do not assume unpublished changes are
-present in remote default branches.
+inbox and an OAuth-protected remote MCP server at https://<my-domain>/mcp.
+Treat this as a deployment task: inspect, prepare a reviewable plan, implement
+approved changes, and verify the result. Do not claim unverified steps succeeded.
 
-First inspect the VPS and explain what is already running: OS, Docker/Compose,
-ports, DNS, reverse proxy, existing TG Flow containers, volumes and backups.
-Do not print secret values. Ask me only for information or actions you cannot
-derive or perform, such as the public domain, SSH access, BotFather setup,
-or a secure way for me to enter the bot token. Never ask me to paste tokens,
-passwords or private keys into chat or command history.
+1. Establish the exact source and target
 
-Use the integrated auth mode in tg_flow_bot and a persistent PostgreSQL
-database. Configure the same database credentials for PostgreSQL, the bot,
-and AUTH_DB_* when using one shared database. Set DEBUG=False and use unique,
-strong server-generated secrets. Set the public OAUTH_ISSUER and the exact
-MCP_RESOURCE_URI consistently, configure the Telegram bot username and token,
-allowed hosts/origins, CSRF settings and the frontend build arguments.
-Preserve existing credentials, user IDs, Django signing keys, OAuth issuer,
-database volumes and migrations when this is an existing installation.
+Use this checked-out TG Flow monorepo containing tg_flow_bot,
+tg_flow_frontend, and tg_flow_storage. Confirm its absolute root and the build
+contexts before acting; do not accidentally deploy similarly named sibling
+copies. Read AGENTS.md, the current source, all relevant README/env examples,
+MCP_AND_CLI.md, docs/vps-deployment.md, and deployment/vps/. Use the exact checkout,
+including relevant uncommitted files, package-lock.json and pinned requirements.
+Do not substitute remote default branches, stale images, or upgrade dependencies
+as a deployment shortcut. Run the relevant existing checks before rollout.
+Record the commit, working-tree file hashes and resulting image IDs/digests.
+Exclude real secrets, local databases, caches and development credentials from
+source archives and build contexts. Adapt all example domains, paths, service
+names, networks and IPs to this host. The runbook's recorded VPS is an example,
+not authorization to connect to it, copy its credentials, or change its services.
 
-Design and configure HTTPS and routing for the actual topology. Forward
-/api/, /oauth/, /.well-known/ and /mcp to the correct services; /mcp uses
-Streamable HTTP. Trust forwarded HTTPS headers only from the actual immediate
-reverse-proxy peer, not arbitrary clients or a shared network. Keep PostgreSQL,
-the bot's port 8081 and the frontend's internal port inaccessible from the
-public internet; only expose intended HTTP/HTTPS ingress. The current Makefiles
-publish ports on all interfaces, so do not expose them unchanged on a public
-VPS. Check firewall rules, Docker port publishing and existing services before
-changing them; do not lock me out of SSH. Preserve other applications.
+Ask me only for information or actions you cannot derive or perform: the intended
+host/domain and SSH access, account/client choices, required Telegram interaction,
+or secure credential entry. Never ask for tokens, passwords or private keys in
+chat or command history. Reuse authorized SSH access, verify the server identity,
+and do not bypass SSH host-key or browser/TLS warnings. Do not create or rotate
+credentials if an existing installation already has working ones.
 
-Build the images, start the database, apply Django auth and Aerich bot
-migrations in the correct order, start the services, and verify persistence,
-restart behavior and logs without disclosing secrets. Before changing an
-existing database or deployment, inspect its migration state and establish
-a backup and rollback plan. Never delete volumes, reset databases, revoke
-credentials, change unrelated services, or deploy over an existing installation
-without my explicit approval. Do not run the local development start.sh as a
-production installer.
+2. Inspect before changing anything
 
-Verify HTTPS externally, /.well-known/oauth-protected-resource/mcp,
-/.well-known/oauth-authorization-server and that /mcp rejects unauthenticated
-requests with the expected OAuth challenge. Check that discovery advertises
-the exact public issuer and MCP URL. Help me finish BotFather domain setup,
-Telegram login, OAuth consent and a real read-only MCP tool call from my
-chosen client. If a client or provider setting requires me, tell me exactly
-what to do; do not claim success based only on a health check. Configure
-registration/token endpoint rate limiting at ingress where supported.
+Explain the OS/architecture, resources/free disk, clock synchronization,
+Docker/Compose versions, listening/published ports, firewall rules, DNS,
+reverse proxy, TLS, existing TG Flow containers/images, mounts/volumes,
+database and migration state, scheduled jobs, backups and other applications.
+Determine whether this is a fresh installation or an upgrade. Check for other
+polling processes using this bot token, including local development instances,
+and any webhook/polling conflict, without exposing the token or webhook secrets.
 
-Finish with the verified public MCP URL, where to add it in my client, the
-commands to inspect and update the deployment, backup/restore guidance, and
-any limitations or steps that could not be verified. Never print secrets.
+Check the intended subdomain's authoritative and public DNS, including A/AAAA.
+An AAAA record must not point to an unusable IPv6 ingress. Preserve root-domain,
+mail and unrelated records. Do not change authoritative nameservers without
+explicit approval. Distinguish DNS failure from application failure using a
+direct-IP request with the correct hostname and full TLS verification; do not
+turn off certificate checks or redeploy blindly when DNS is the problem.
+
+Show a concrete plan with the affected services, expected interruption, pending
+migrations, backup location, verification steps and rollback boundary. Before
+changing an existing database/deployment, obtain my explicit approval unless
+this session already authorizes that exact change. Never delete volumes, reset
+databases, revoke credentials, change unrelated services or silently replace
+an existing installation. Preserve SSH access and other applications.
+
+3. Preserve data and establish recovery
+
+Before an upgrade, retain the running image IDs/tags, sources, manifest and
+configuration. Back up both bot and Django/OAuth data, database roles,
+credentials/signing keys, deployment files and TLS state. Verify checksums and
+restore into an isolated, non-public database; rehearse pending migrations there.
+For the live migration, stop writers and take a final consistent backup.
+Compare stable pre-existing rows/ownership and migration state after rollout.
+Keep users, OAuth clients/grants, issuer, signing keys, subscriptions, messages,
+capture settings, read checkpoints and Business ownership intact.
+
+Preserve every business_reply_attempts row and its no-resend semantics. Never
+clear/downgrade the ledger, expire uncertain attempts, or resend them after a
+restart or restore. An older image may be unsafe once Business/private data or
+reply attempts exist: check schema and ownership compatibility before choosing
+an application rollback. Do not automatically downgrade migrations. If database
+restore is needed, restore into a separate volume and get approval for cutover;
+never restore destructively over the live database. Retain rollback artifacts.
+
+Configure scheduled backups, verify a restore, and arrange an encrypted off-VPS
+copy to a destination I approve. If an off-server destination is unavailable,
+report that gap explicitly; local-only backups do not cover loss of the VPS.
+Monitor backup growth without automatic volume removal or unapproved pruning.
+
+4. Configure production authentication and frontend
+
+Use integrated auth explicitly (AUTH_LOCAL_ASGI=True) and persistent PostgreSQL.
+For one shared database, PostgreSQL credentials must match DB_* and AUTH_DB_*;
+preserve separate existing auth data rather than silently starting an empty DB.
+Set DEBUG=False. Generate unique strong server-side secrets only for a new
+installation or genuinely missing settings. Preserve existing credentials,
+user IDs, Django/JWT signing keys, public issuer and migration history.
+Keep secret files private and out of Git, logs and build arguments.
+
+Set OAUTH_ISSUER consistently to the canonical public HTTPS issuer (including
+its normalized trailing slash), and MCP_RESOURCE_URI to the exact public
+https://<my-domain>/mcp resource. Match resource-server introspection credentials
+across auth and MCP. Verify the bot token privately using Telegram getMe and
+use the actual username. BOT_TOKEN and TELEGRAM_BOT_TOKEN, if both set, must
+identify the same bot. Use a hidden server-side prompt or equivalent secure
+mechanism for token entry; do not expose token-bearing Telegram API URLs.
+
+Configure exact allowed hosts/origins, CORS/CSRF settings and secure cookies for
+the actual topology, without broad production wildcards. Build the frontend
+with the correct public VITE_BOT_USERNAME, VITE_API_URL and VITE_AUTH_API_URL
+(or verified same-origin defaults). VITE_* values are public build-time values:
+never place secrets there. Verify the served bundle and local font/static assets,
+not just the source env file. Review the intended account-access/registration
+policy and verify that unauthenticated users cannot read private data.
+
+5. Configure networking and operation
+
+Install only missing, compatible prerequisites from official sources; do not
+upgrade unrelated software. Use production Compose/service definitions adapted
+to this installation.
+Only publish the intended HTTP/HTTPS ingress; keep PostgreSQL, bot port 8081
+and the frontend's internal port off the public internet. The Makefiles publish
+ports broadly, so do not deploy them unchanged. Check both firewall rules and
+Docker port publishing; firewall rules alone do not constrain published ports.
+Avoid overlapping Docker networks and preserve existing applications.
+
+Provision trusted HTTPS, HTTP-to-HTTPS redirects, ACME challenge routing and
+automated certificate renewal. Test renewal and verify its timer/reload behavior.
+Route /api/, /oauth/, /.well-known/ and exact /mcp to the correct backend;
+serve frontend deep links correctly. /mcp uses Streamable HTTP: preserve the
+path, avoid caching/buffering, and configure suitable connection timeouts.
+Trust forwarded HTTPS/host headers only from the actual immediate reverse-proxy
+peer, not arbitrary clients or a shared network. Overwrite untrusted headers
+at ingress. Verify spoofed forwarding headers cannot bypass this boundary.
+
+Rate-limit registration, token and login/authorization/session endpoints at
+trusted ingress where supported. Keep access/error logs from recording OAuth
+codes, token-bearing URLs, authorization headers, cookies, Telegram tokens or
+private message content; disable unsafe HTTPX/request logging. Set bounded log
+rotation. Inspect/redact before sharing logs or resolved Compose configuration.
+
+Build images, start PostgreSQL and wait for readiness. With writers stopped,
+inspect and apply pending Django auth migrations, then checked-in Aerich bot
+migrations in their documented order, including current Business/reply tables.
+Use a maintenance container with no polling or fixed-IP conflict. Do not generate
+an empty replacement schema or use local start.sh as a production installer.
+Start the services only after migrations succeed. Keep one active polling bot
+per token and one app worker/replica for this combined polling deployment;
+no development reload or accidental parallel workers. Preserve pending Telegram
+updates and request membership/Business message, edit and deletion update types.
+Verify startup, restart policies, actual restart recovery and database persistence.
+For a frontend-only update, avoid restarting/migrating the bot or DB unnecessarily.
+
+6. Complete Telegram setup and capture verification
+
+Help me configure the bot's login domain in BotFather and complete real Telegram
+website login. For groups, ensure the bot may receive the desired messages
+through the appropriate Privacy Mode/group permissions. New additions should
+subscribe only the human who added the bot in full mode, without mandatory
+/start or /subscribe. Existing modes, especially disabled, must stay unchanged.
+For an old group without a subscription, explain the one-time remove/re-add or
+optional recovery command rather than guessing ownership. Verify new ingestion
+and reversible UI disabling without deleting history or exposing another owner's
+messages. Do not print private message text.
+
+Include Telegram Business private chats. Verify current Telegram account/client
+eligibility, BotFather Secretary/Business Mode and the account's chat-automation
+connection settings using current official instructions. Help me select which
+private conversations the bot may access. Website login alone does not connect
+the Telegram account. Verify the live connection and newly delivered events,
+owner isolation, UI active/disconnected and full/disabled states, and retention
+of already captured history/checkpoints as documented. Preserve persistent event
+ordering; do not reset watermarks or promise reconnecting rotates a connection ID.
+Do not promise old-history import, attachment downloads or automatic Telegram
+read-receipt syncing. Report unavailable account features or missing rights.
+
+7. Verify OAuth, MCP and unread workflow
+
+From outside the VPS, verify trusted HTTPS, both discovery endpoints
+/.well-known/oauth-protected-resource/mcp and
+/.well-known/oauth-authorization-server, the exact issuer/resource, and the
+expected unauthenticated /mcp OAuth challenge. Verify protected APIs reject
+unauthenticated access and internal ports remain unreachable externally.
+Test the actual chosen client's Telegram login, OAuth consent and a real
+read-only MCP call; a health check or local tool registry alone is insufficient.
+Preserve existing working sessions and validate write-scope enforcement.
+
+Refresh the client's tool catalogue after metadata changes, start a new chat,
+and check client-visible tools against MCP_AND_CLI.md. In particular verify
+list_unread_chat_messages, mark_chat_read, reply_to_chat_message and
+get_chat_reply_status, their schemas and documented scopes. For ChatGPT, use
+the connection's Refresh action where available; do not treat a VPS-only tools
+listing as proof the client can call it. If a provider step requires me, give
+exact current instructions without asking for secrets or full OAuth URLs.
+
+For requested GPT summaries, read every page of a fixed unread snapshot,
+produce the summary successfully, then acknowledge only the processed boundary
+with its capture-mode generation. Newer arrivals must remain unread. Reading
+alone and failed/partial processing must not acknowledge unprocessed messages.
+Verify the UI Mark as read and MCP share the same per-owner checkpoint; use
+isolated fixtures or an explicitly requested real workflow. Do not mark real
+messages read merely for a deployment check, archive mentions instead of marking
+read, or confuse this cursor with Telegram read receipts.
+
+8. Verify private replies without unintended sends
+
+Check the private Reply / Send as me UI, ownership, write-scope enforcement and
+reply_to_chat_message confirmation gate using mocks or non-sending probes.
+Sending requires a current owner-matched Business connection, can_reply rights,
+a captured target in that chat and Telegram's recent-incoming-message eligibility.
+Never send a real test message without my approval of the recipient and exact
+text. For an approved real attempt, use one UUID request_id; repeated keys must
+never cause another send. A fresh UUID is a separately approved new attempt.
+
+Check delivery using only read-only get_chat_reply_status or its GET endpoint.
+Timeouts, reloads, missing results, rate limits or unknown status never authorize
+an automatic resend. Check Telegram and reconcile before a separately approved
+new send. Explain unknown delivery and reply_attached=false without retrying.
+Preserve attempt metadata across browser reloads and report storage/recovery
+limitations. Distinguish registered tools, mock tests and real delivery actually
+verified; outgoing verification may remain pending if I do not approve a send.
+
+9. Handover
+
+Report what changed, the deployed source/image manifest, backup and rollback
+locations, checks performed/results, and any unresolved or user-only steps.
+Give the verified website/MCP URLs, exact client setup/refresh instructions,
+commands to inspect logs/status/migrations, restart and safely update the stack,
+certificate/backup schedules, and backup/restore/rollback guidance. Explain the
+unverified steps and off-server backup gaps explicitly. Never print secrets.
 ```
 
 </details>
