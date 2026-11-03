@@ -19,7 +19,7 @@ dependencies = [
     "mcp==2.0.0",
     "pydantic==2.13.4",
     "pydantic-settings==2.14.2",
-    "python-telegram-bot==21.7",
+    "python-telegram-bot==22.8",
     "tortoise-orm[asyncpg]==0.23.0",
     "typer==0.27.0",
     "uvicorn[standard]==0.41.0",

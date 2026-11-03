@@ -1,0 +1,9 @@
+[Unit]
+Description=TG Flow PostgreSQL and deployment backup
+Requires=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/opt/tg-flow/bin/backup
+UMask=0077

@@ -3,7 +3,7 @@ from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from models import ChatMessage, MentionedMessage
+from models import MentionedMessage
 from schemas import (
     ChatMessageResponse,
     MentionContextResponse,
@@ -13,6 +13,7 @@ from schemas import (
     ReplyRequest,
     ReplyResponse,
 )
+from services.mention_context import mention_context_messages
 from services.security import TokenPayload, get_current_user_read, get_current_user_write
 
 router = APIRouter(prefix="/mentions", tags=["mentions"])
@@ -109,6 +110,10 @@ async def reply_to_mention(
     if not mention:
         raise HTTPException(status_code=404, detail="Mention not found")
 
+    chat = await mention.chat
+    if chat.business_connection_id is not None or chat.chat_type == "private":
+        raise HTTPException(status_code=403, detail="Business messages do not support mention replies")
+
     if not reply.text or not reply.text.strip():
         raise HTTPException(status_code=400, detail="Reply text cannot be empty")
 
@@ -193,23 +198,7 @@ async def get_mention_context(
     if not mention:
         raise HTTPException(status_code=404, detail="Mention not found")
 
-    before_messages = (
-        await ChatMessage.filter(
-            chat_id=mention.chat_id,
-            message_id__lt=mention.message_id,
-        )
-        .order_by("-message_id")
-        .limit(before)
-    )
-
-    after_messages = (
-        await ChatMessage.filter(
-            chat_id=mention.chat_id,
-            message_id__gt=mention.message_id,
-        )
-        .order_by("message_id")
-        .limit(after)
-    )
+    before_messages, after_messages = await mention_context_messages(mention, before, after)
 
     return MentionContextResponse(
         mention=MentionWithLink(
@@ -228,6 +217,6 @@ async def get_mention_context(
             chat_username=mention.chat.username if mention.chat else None,
             is_archived=mention.is_archived,
         ),
-        before=[ChatMessageResponse.model_validate(m) for m in reversed(before_messages)],
+        before=[ChatMessageResponse.model_validate(m) for m in before_messages],
         after=[ChatMessageResponse.model_validate(m) for m in after_messages],
     )

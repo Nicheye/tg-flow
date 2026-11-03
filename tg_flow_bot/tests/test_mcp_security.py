@@ -87,7 +87,8 @@ async def test_transport_security_precedes_authentication():
 
 
 @pytest.mark.asyncio
-async def test_write_tool_returns_incremental_scope_challenge():
+@pytest.mark.parametrize("tool_name", ["reply_to_mention", "mark_chat_read", "reply_to_chat_message"])
+async def test_write_tool_returns_incremental_scope_challenge(tool_name):
     middleware = secured_app(["mentions:read"])
     async with AsyncClient(
         transport=ASGITransport(app=middleware), base_url="http://localhost:8081"
@@ -98,7 +99,7 @@ async def test_write_tool_returns_incremental_scope_challenge():
             headers={
                 "Authorization": "Bearer valid-token",
                 "Mcp-Method": "tools/call",
-                "Mcp-Name": "reply_to_mention",
+                "Mcp-Name": tool_name,
             },
         )
 
@@ -229,10 +230,14 @@ async def test_mcp_2026_07_28_lists_tools_and_enforces_full_chat_mode(
         "list_mentions",
         "list_chat_subscriptions",
         "list_chat_messages",
+        "list_unread_chat_messages",
+        "mark_chat_read",
         "get_mention_stats",
         "get_mention_context",
         "archive_mention",
         "reply_to_mention",
+        "reply_to_chat_message",
+        "get_chat_reply_status",
     }
     assert denied.status_code == HTTPStatus.OK
     assert denied.json()["result"]["isError"] is True

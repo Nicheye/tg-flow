@@ -27,4 +27,36 @@ describe('auth API URL', () => {
       headers: { Authorization: 'Bearer access-token' },
     })
   })
+
+  it('preserves the signed widget photo URL when sending Telegram authentication', async () => {
+    vi.stubGlobal('localStorage', { setItem: vi.fn() })
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ user: { id: 1 }, access: 'access', refresh: 'refresh' }),
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const widgetData = {
+      id: 12345,
+      username: 'example_user',
+      first_name: 'Example',
+      last_name: 'User',
+      photo_url: 'https://t.me/i/userpic/320/example.jpg',
+      auth_date: 1793440000,
+      hash: 'signed-widget-hash',
+    }
+
+    const { authService } = await import('./auth')
+    await authService.telegramAuth(widgetData)
+
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body)
+    expect(body).toEqual({
+      tg_user_id: widgetData.id,
+      tg_username: widgetData.username,
+      first_name: widgetData.first_name,
+      last_name: widgetData.last_name,
+      photo_url: widgetData.photo_url,
+      auth_date: widgetData.auth_date,
+      hash: widgetData.hash,
+    })
+  })
 })

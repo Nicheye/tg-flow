@@ -3,9 +3,11 @@ import binascii
 import hashlib
 import hmac
 import json
+import re
 import secrets
 import uuid
 from datetime import timedelta
+from ipaddress import IPv6Address
 from urllib.parse import urlencode, urlsplit
 
 from django.conf import settings
@@ -17,6 +19,8 @@ from django.shortcuts import redirect, render
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt, csrf_protect, ensure_csrf_cookie
 from django.views.decorators.http import require_GET, require_POST
+from rest_framework.exceptions import AuthenticationFailed
+from rest_framework_simplejwt.authentication import JWTAuthentication
 
 from .models import (
     OAuthAccessToken,
@@ -77,6 +81,19 @@ def _is_loopback(hostname: str | None) -> bool:
     return hostname in {"localhost", "127.0.0.1", "::1"}
 
 
+def _redirect_csp_source(value: str) -> str:
+    parsed = urlsplit(value)
+    if parsed.scheme not in {"https", "http"} or not parsed.hostname:
+        raise ValueError("Invalid redirect origin")
+    host = parsed.hostname.encode("idna").decode("ascii")
+    if ":" in host:
+        host = f"[{IPv6Address(host)}]"
+    elif not re.fullmatch(r"[A-Za-z0-9.-]+", host):
+        raise ValueError("Invalid redirect hostname")
+    port = f":{parsed.port}" if parsed.port is not None else ""
+    return f"{parsed.scheme}://{host}{port}"
+
+
 def _valid_redirect_uri(value: str) -> bool:
     try:
         parsed = urlsplit(value)
@@ -88,6 +105,7 @@ def _valid_redirect_uri(value: str) -> bool:
             or parsed.password
         ):
             return False
+        _redirect_csp_source(value)
         if parsed.scheme == "https":
             return True
         return parsed.scheme == "http" and _is_loopback(parsed.hostname)
@@ -264,12 +282,17 @@ def authorize(request: HttpRequest) -> HttpResponse:
     if error_response is not None:
         return error_response
 
+    try:
+        redirect_csp_source = _redirect_csp_source(values["redirect_uri"])
+    except (ValueError, UnicodeError):
+        return _oauth_error("invalid_request", "Registered redirect origin is invalid")
     request.session["oauth_request"] = values
     request.session.modified = True
     context = {
         "client": client,
         "scopes": values["scope"].split(),
         "redirect_uri": values["redirect_uri"],
+        "redirect_csp_source": redirect_csp_source,
         "redirect_host": urlsplit(values["redirect_uri"]).hostname,
         "loopback_redirect": _is_loopback(urlsplit(values["redirect_uri"]).hostname),
         "request_id": values["request_id"],
@@ -341,6 +364,22 @@ def telegram_session(request: HttpRequest) -> JsonResponse:
         serializer.validated_data["user"],
         backend="django.contrib.auth.backends.ModelBackend",
     )
+    return JsonResponse({"ok": True})
+
+
+@csrf_protect
+@require_POST
+def web_session(request: HttpRequest) -> JsonResponse:
+    if not request.session.get("oauth_request"):
+        return JsonResponse({"detail": "Start authorization from your MCP client first"}, status=400)
+    try:
+        identity = JWTAuthentication().authenticate(request)
+    except AuthenticationFailed:
+        identity = None
+    if identity is None:
+        return JsonResponse({"detail": "A valid website access token is required"}, status=401)
+    user, _ = identity
+    login(request, user, backend="django.contrib.auth.backends.ModelBackend")
     return JsonResponse({"ok": True})
 
 

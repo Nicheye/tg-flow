@@ -20,11 +20,44 @@
         <div class="widget" id="telegram-widget"></div>
         <p class="error" id="auth-error">Telegram sign-in failed. Please retry.</p>
     {% else %}
-        <p class="error" style="display:block">Telegram login is not configured. Set <code>TELEGRAM_BOT_USERNAME</code>.</p>
+        <p class="error" id="auth-error" style="display:block">Telegram login is not configured. Set <code>TELEGRAM_BOT_USERNAME</code>.</p>
     {% endif %}
     <form hidden>{% csrf_token %}</form>
+    <p>Already signed in to TG Flow?</p>
+    <button type="button" id="web-session-login">Continue with your TG Flow account</button>
+    <p><a href="/login" target="_blank" rel="noopener" style="color:#93c5fd">Sign in to TG Flow in another tab</a></p>
 </main>
 <script>
+    document.getElementById('web-session-login').addEventListener('click', async function() {
+        const error = document.getElementById('auth-error');
+        try {
+            const access = localStorage.getItem('access_token');
+            if (!access) {
+                window.open('/login', 'tg-flow-web-login');
+                error.textContent = 'Sign in in the new tab, then click Continue here.';
+                error.style.display = 'block';
+                return;
+            }
+            const response = await fetch('/oauth/session/web', {
+                method: 'POST', credentials: 'same-origin',
+                headers: {
+                    'Authorization': 'Bearer ' + access,
+                    'X-CSRFToken': document.querySelector('[name=csrfmiddlewaretoken]').value
+                }
+            });
+            if (response.ok) window.location.reload();
+            else {
+                error.textContent = response.status === 401
+                    ? 'Your website session has expired. Sign in on TG Flow, then try again.'
+                    : 'Sign-in could not be completed. Restart the connection from your MCP client.';
+                error.style.display = 'block';
+                if (response.status === 401) window.open('/login', 'tg-flow-web-login');
+            }
+        } catch {
+            error.textContent = 'Sign-in could not be completed. Please try again.';
+            error.style.display = 'block';
+        }
+    });
     async function onTelegramAuth(user) {
         const response = await fetch('/oauth/session/telegram', {
             method: 'POST',
@@ -44,14 +77,28 @@
         else document.getElementById('auth-error').style.display = 'block';
     }
     {% if telegram_bot_username %}
+    const widget = document.getElementById('telegram-widget');
+    // data-onauth makes the legacy widget evaluate a string, which CSP blocks.
+    // Accept its signed payload only from this widget's exact frame and origin.
+    window.addEventListener('message', function(event) {
+        const frame = widget.querySelector('iframe');
+        if (!frame || event.origin !== 'https://oauth.telegram.org' || event.source !== frame.contentWindow) return;
+        let message;
+        try { message = JSON.parse(event.data); } catch { return; }
+        if (message && message.event === 'auth_user' && message.auth_data) {
+            onTelegramAuth(message.auth_data);
+        }
+    });
     const script = document.createElement('script');
     script.src = 'https://telegram.org/js/telegram-widget.js?22';
     script.async = true;
     script.dataset.telegramLogin = '{{ telegram_bot_username|escapejs }}';
     script.dataset.size = 'large';
     script.dataset.radius = '8';
-    script.dataset.onauth = 'onTelegramAuth(user)';
-    document.getElementById('telegram-widget').appendChild(script);
+    script.onerror = function() {
+        document.getElementById('auth-error').style.display = 'block';
+    };
+    widget.appendChild(script);
     {% endif %}
 </script>
 </body>

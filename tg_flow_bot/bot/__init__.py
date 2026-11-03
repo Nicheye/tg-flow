@@ -1,8 +1,22 @@
-from telegram.ext import Application, CommandHandler, MessageHandler, filters
+from telegram.ext import (
+    Application,
+    BusinessConnectionHandler,
+    BusinessMessagesDeletedHandler,
+    ChatMemberHandler,
+    CommandHandler,
+    MessageHandler,
+    filters,
+)
 
 from config import settings
 
+from .business import (
+    business_connection_handler,
+    business_message_handler,
+    business_messages_deleted_handler,
+)
 from .handlers import (
+    bot_membership_handler,
     help_handler,
     mode_handler,
     my_mentions_handler,
@@ -16,6 +30,19 @@ from .parser import message_handler
 def create_bot_application() -> Application:
     """Create and configure the Telegram bot application"""
     application = Application.builder().token(settings.BOT_TOKEN).build()
+
+    application.add_handler(
+        ChatMemberHandler(bot_membership_handler, ChatMemberHandler.MY_CHAT_MEMBER)
+    )
+
+    # Business updates must be consumed before ordinary bot commands. A /start
+    # in somebody's private conversation is archived, never executed by the bot.
+    application.add_handler(BusinessConnectionHandler(business_connection_handler))
+    application.add_handler(MessageHandler(
+        filters.UpdateType.BUSINESS_MESSAGE | filters.UpdateType.EDITED_BUSINESS_MESSAGE,
+        business_message_handler,
+    ))
+    application.add_handler(BusinessMessagesDeletedHandler(business_messages_deleted_handler))
 
     # Command handlers
     application.add_handler(CommandHandler("start", start_handler))

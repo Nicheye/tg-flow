@@ -64,6 +64,8 @@ class TelegramAuthSerializer(serializers.Serializer):
                 "email": f"tg_{tg_user_id}@telegram.local",
             },
         )
+        if not user.is_active:
+            raise serializers.ValidationError("This account is inactive")
         if created:
             user.set_unusable_password()
             user.save()

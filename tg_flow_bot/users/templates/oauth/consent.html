@@ -3,7 +3,7 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width,initial-scale=1">
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'; form-action 'self' {{ redirect_csp_source }}">
     <title>Authorize {{ client.client_name }}</title>
     <style>
         body { background:#09090b; color:#fafafa; font:16px system-ui,sans-serif; margin:0; min-height:100vh; display:grid; place-items:center; }

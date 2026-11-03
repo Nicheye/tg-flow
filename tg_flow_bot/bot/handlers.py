@@ -1,7 +1,7 @@
 import logging
 from datetime import UTC, datetime
 
-from telegram import Update
+from telegram import ChatMember, Update
 from telegram.ext import ContextTypes
 
 from models import Chat, UserChatSubscription
@@ -27,7 +27,62 @@ def _requested_capture_mode(context: ContextTypes.DEFAULT_TYPE) -> str | None:
 
 
 def _mode_title(mode: str) -> str:
-    return "all messages" if mode == CAPTURE_MODE_FULL else "mentions and context"
+    return {
+        "full": "все сообщения",
+        "mentions": "упоминания и контекст",
+        "disabled": "сохранение выключено",
+    }[mode]
+
+
+async def _resolve_user(user):
+    """Resolve the durable auth identity; never trust a cached process-local ID."""
+    if not user or user.is_bot or user.id in {1087968824, 136817688}:
+        return None
+    return await auth_client.register(
+        TelegramUser(
+            tg_user_id=user.id,
+            tg_username=user.username,
+            first_name=user.first_name,
+            last_name=user.last_name,
+        )
+    )
+
+
+async def bot_membership_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Subscribe only the human who actually added this bot to a group."""
+    event = update.my_chat_member
+    if not event or event.chat.type not in {"group", "supergroup"}:
+        return
+
+    def present(member):
+        return member.status in {ChatMember.MEMBER, ChatMember.ADMINISTRATOR, ChatMember.OWNER} or (
+            member.status == ChatMember.RESTRICTED and member.is_member
+        )
+
+    if present(event.old_chat_member) or not present(event.new_chat_member):
+        return
+    actor = event.from_user
+    auth = await _resolve_user(actor)
+    if not auth:
+        return
+    chat, _ = await Chat.get_or_create(
+        id=event.chat.id,
+        defaults={
+            "chat_type": event.chat.type,
+            "title": event.chat.title,
+            "username": event.chat.username,
+        },
+    )
+    # Replayed events and re-adds must never override an existing user's choice.
+    await UserChatSubscription.get_or_create(
+        user_id=auth.user_id,
+        chat=chat,
+        defaults={
+            "tg_user_id": actor.id,
+            "tg_username": actor.username,
+            "capture_mode": "full",
+        },
+    )
 
 
 async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -54,46 +109,46 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         if auth_response.created:
             logger.info(f"User {user.id} registered successfully")
             await update.message.reply_text(
-                f"👋 Hello, {user.first_name}!\n\n"
-                "✅ You have successfully registered.\n\n"
-                "Add me to a chat and choose a mode with /subscribe.\n\n"
-                "Commands:\n"
-                "/subscribe mentions — mentions and context\n"
-                "/subscribe all — save the full chat feed\n"
-                "/mode — view or change the mode\n"
-                "/unsubscribe — unsubscribe from a chat\n"
-                "/my_mentions — list mentions\n"
-                "/help — help"
+                f"👋 Привет, {user.first_name}!\n\n"
+                f"✅ Ты успешно зарегистрирован.\n\n"
+                f"Добавь меня в группу — все новые сообщения сохранятся автоматически для тебя. Режим и выключение доступны на сайте.\n\n"
+                f"Команды:\n"
+                f"/subscribe mentions — упоминания и контекст\n"
+                f"/subscribe all — сохранять весь чат\n"
+                f"/mode — посмотреть или сменить режим\n"
+                f"/unsubscribe — отписаться от чата\n"
+                f"/my_mentions — список упоминаний\n"
+                f"/help — справка"
             )
         else:
             logger.info(f"User {user.id} already registered, logged in")
             await update.message.reply_text(
-                f"👋 Welcome back, {user.first_name}!\n\n"
-                "✅ You are already registered.\n\n"
-                "Use /help to see the available commands."
+                f"👋 С возвращением, {user.first_name}!\n\n"
+                f"✅ Ты уже зарегистрирован.\n\n"
+                f"Используй /help для списка команд."
             )
     else:
         logger.error(f"Failed to register user {user.id}")
-        await update.message.reply_text("❌ Registration failed. Please try again later.")
+        await update.message.reply_text("❌ Ошибка регистрации. Попробуй позже.")
 
 
 async def help_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle /help command"""
     await update.message.reply_text(
         "🤖 <b>TG Flow Bot</b>\n\n"
-        "Choose between mentions with context and a full chat feed.\n\n"
-        "<b>How to use:</b>\n"
-        "1. Add me to a chat\n"
-        "2. Send /subscribe mentions or /subscribe all in the chat\n"
-        "3. Change the mode later with /mode\n\n"
-        "<b>Commands:</b>\n"
-        "/start — register\n"
-        "/subscribe mentions — mentions and context (default)\n"
-        "/subscribe all — full chat feed\n"
-        "/mode [mentions|all] — view or change the mode\n"
-        "/unsubscribe — unsubscribe from a chat\n"
-        "/my_mentions — list mentions\n"
-        "/help — show this help",
+        "Я умею работать в двух режимах: упоминания с контекстом или полная лента чата.\n\n"
+        "<b>Как использовать:</b>\n"
+        "1. Добавь меня в чат\n"
+        "2. Все новые сообщения автоматически сохраняются для добавившего меня пользователя\n"
+        "3. Сменить режим или выключить сохранение можно на сайте; /subscribe — необязательное восстановление\n\n"
+        "<b>Команды:</b>\n"
+        "/start — регистрация\n"
+        "/subscribe mentions — упоминания и контекст (по умолчанию)\n"
+        "/subscribe all — полная лента чата\n"
+        "/mode [mentions|all] — посмотреть или сменить режим\n"
+        "/unsubscribe — отписаться от чата\n"
+        "/my_mentions — список упоминаний\n"
+        "/help — эта справка",
         parse_mode="HTML",
     )
 
@@ -106,26 +161,25 @@ async def subscribe_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     if not chat or not user:
         return
 
-    if chat.type == "private":
+    if chat.type not in {"group", "supergroup"}:
         await update.message.reply_text(
-            "❌ This command only works in group chats.\n"
-            "Add me to a chat and send /subscribe there."
+            "❌ Эта команда работает только в групповых чатах.\n"
+            "Добавь меня в чат и напиши /subscribe там."
         )
         return
 
     capture_mode = _requested_capture_mode(context)
     if capture_mode is None:
         await update.message.reply_text(
-            "❌ Unknown mode. Use /subscribe mentions or /subscribe all."
+            "❌ Неизвестный режим. Используй /subscribe mentions или /subscribe all."
         )
         return
 
-    user_id = context.user_data.get("user_id")
+    auth = await _resolve_user(user)
+    user_id = auth.user_id if auth else None
     if not user_id:
-        logger.warning(f"User {user.id} tried to subscribe without registration")
-        await update.message.reply_text(
-            "❌ Please register first: send me /start in a private message."
-        )
+        logger.warning("Auth failed for subscription actor %s", user.id)
+        await update.message.reply_text("❌ Не удалось подтвердить аккаунт. Попробуй позже.")
         return
 
     # Get full chat info (including photo) from Telegram API
@@ -166,13 +220,12 @@ async def subscribe_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     if created:
         logger.info(f"User {user.id} subscribed to chat {chat.id}")
         status = (
-            "you are subscribed to mentions in this chat"
+            "ты подписан на упоминания в этом чате"
             if capture_mode == CAPTURE_MODE_MENTIONS
-            else "you are subscribed to the full chat feed"
+            else "ты подписан на полную ленту этого чата"
         )
         await update.message.reply_text(
-            f"✅ {user.first_name}, {status}!\n"
-            f"Mode: {_mode_title(capture_mode)}."
+            f"✅ {user.first_name}, {status}!\nРежим: {_mode_title(capture_mode)}."
         )
     else:
         changed = subscription.capture_mode != capture_mode
@@ -181,9 +234,16 @@ async def subscribe_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         subscription.capture_mode = capture_mode
         subscription.tg_user_id = user.id
         subscription.tg_username = user.username
-        await subscription.save()
+        await subscription.save(
+            update_fields=(
+                "capture_mode",
+                "capture_mode_changed_at",
+                "tg_user_id",
+                "tg_username",
+            )
+        )
         logger.info(f"User {user.id} set {capture_mode} mode for chat {chat.id}")
-        prefix = "✅ Mode changed" if changed else "ℹ️ You are already subscribed with this mode"
+        prefix = "✅ Режим изменён" if changed else "ℹ️ Ты уже подписан, этот режим включён"
         await update.message.reply_text(f"{prefix}: {_mode_title(capture_mode)}.")
 
 
@@ -191,42 +251,41 @@ async def mode_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     """Show or change the capture mode for the current chat."""
     chat = update.effective_chat
     user = update.effective_user
-    if not chat or not user or chat.type == "private":
-        await update.message.reply_text("❌ This command only works in group chats.")
+    if not chat or not user or chat.type not in {"group", "supergroup"}:
+        await update.message.reply_text("❌ Эта команда работает только в групповых чатах.")
         return
 
-    user_id = context.user_data.get("user_id")
+    auth = await _resolve_user(user)
+    user_id = auth.user_id if auth else None
     if not user_id:
-        await update.message.reply_text(
-            "❌ Please register first: send me /start in a private message."
-        )
+        await update.message.reply_text("❌ Не удалось подтвердить аккаунт. Попробуй позже.")
         return
 
     subscription = await UserChatSubscription.get_or_none(user_id=user_id, chat_id=chat.id)
     if not subscription:
         await update.message.reply_text(
-            "ℹ️ Please subscribe first: /subscribe mentions or /subscribe all."
+            "ℹ️ Сначала подпишись: /subscribe mentions или /subscribe all."
         )
         return
 
     args = getattr(context, "args", None)
     if not isinstance(args, (list, tuple)) or not args:
         await update.message.reply_text(
-            f"Current mode: {_mode_title(subscription.capture_mode)}.\n"
-            "Change it with /mode mentions or /mode all."
+            f"Текущий режим: {_mode_title(subscription.capture_mode)}.\n"
+            "Сменить: /mode mentions или /mode all."
         )
         return
 
     capture_mode = _requested_capture_mode(context)
     if capture_mode is None:
-        await update.message.reply_text("❌ Use /mode mentions or /mode all.")
+        await update.message.reply_text("❌ Используй /mode mentions или /mode all.")
         return
 
     if subscription.capture_mode != capture_mode:
         subscription.capture_mode = capture_mode
         subscription.capture_mode_changed_at = datetime.now(UTC)
         await subscription.save(update_fields=("capture_mode", "capture_mode_changed_at"))
-    await update.message.reply_text(f"✅ Mode changed: {_mode_title(capture_mode)}.")
+    await update.message.reply_text(f"✅ Режим изменён: {_mode_title(capture_mode)}.")
 
 
 async def unsubscribe_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -237,28 +296,30 @@ async def unsubscribe_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
     if not chat or not user:
         return
 
-    if chat.type == "private":
-        await update.message.reply_text("❌ This command only works in group chats.")
+    if chat.type not in {"group", "supergroup"}:
+        await update.message.reply_text("❌ Эта команда работает только в групповых чатах.")
         return
 
-    user_id = context.user_data.get("user_id")
+    auth = await _resolve_user(user)
+    user_id = auth.user_id if auth else None
     if not user_id:
-        logger.warning(f"User {user.id} tried to unsubscribe without registration")
-        await update.message.reply_text(
-            "❌ Please register first: send me /start in a private message."
-        )
+        logger.warning("Auth failed for unsubscription actor %s", user.id)
+        await update.message.reply_text("❌ Не удалось подтвердить аккаунт. Попробуй позже.")
         return
 
-    deleted = await UserChatSubscription.filter(user_id=user_id, chat_id=chat.id).delete()
+    subscription = await UserChatSubscription.get_or_none(user_id=user_id, chat_id=chat.id)
+    found = subscription is not None
+    if subscription and subscription.capture_mode != "disabled":
+        subscription.capture_mode = "disabled"
+        subscription.capture_mode_changed_at = datetime.now(UTC)
+        await subscription.save(update_fields=("capture_mode", "capture_mode_changed_at"))
 
-    if deleted:
+    if found:
         logger.info(f"User {user.id} unsubscribed from chat {chat.id}")
-        await update.message.reply_text(
-            f"✅ {user.first_name}, you have unsubscribed from this chat."
-        )
+        await update.message.reply_text(f"✅ {user.first_name}, ты отписан от этого чата.")
     else:
         logger.debug(f"User {user.id} was not subscribed to chat {chat.id}")
-        await update.message.reply_text(f"ℹ️ {user.first_name}, you were not subscribed to this chat.")
+        await update.message.reply_text(f"ℹ️ {user.first_name}, ты не был подписан на этот чат.")
 
 
 async def my_mentions_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -272,8 +333,8 @@ async def my_mentions_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     # TODO: Fetch mentions from database
     await update.message.reply_text(
-        "📋 <b>Your mentions:</b>\n\n"
-        "<i>No saved mentions yet.</i>\n\n"
-        "Subscribe to a chat with /subscribe",
+        "📋 <b>Твои упоминания:</b>\n\n"
+        "<i>Пока нет сохранённых упоминаний.</i>\n\n"
+        "Подпишись на чат командой /subscribe",
         parse_mode="HTML",
     )

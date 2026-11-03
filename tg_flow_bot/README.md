@@ -6,13 +6,13 @@ It also provides a secured MCP Streamable HTTP server and the `tgflow` CLI. See 
 
 ## Self-hosting
 
-For a self-hosted instance, the public MCP address is `https://<your-domain>/mcp`. The bot, embedded auth, frontend and PostgreSQL must be deployed with an HTTPS reverse proxy, a persistent database and the correct trusted-proxy settings. The [installation guide and agent prompt](../README.md#install-with-a-coding-agent) describe the current early-access workflow and its limitations.
+For a self-hosted instance, the public MCP address is `https://<your-domain>/mcp`. The bot, embedded auth, frontend and PostgreSQL must be deployed with an HTTPS reverse proxy, a persistent database and the correct trusted-proxy settings. The sibling workspace's [installation guide and agent prompt](../README.md#install-with-a-coding-agent) describe the current early-access workflow and its limitations.
 
 The production environment template is [envs/prod/env.op.example](envs/prod/env.op.example). It is an example, not a deployment configuration: replace its placeholders and keep secrets outside Git. The current Makefile publishes port 8081 on all interfaces and bind-mounts source code; it does not provide a complete hardened VPS deployment. Do not expose it directly to the public internet.
 
 ## Architecture
 
-**Key Concept:** One bot per chat, but multiple users can subscribe to it.
+**Key Concept:** Adding the bot to a group automatically subscribes the human who added it to all new messages. Other users can optionally subscribe for themselves.
 
 The bot can be added to a chat only once (Telegram limitation), but multiple users can register and independently choose mention or full-feed access for that chat.
 
@@ -163,15 +163,59 @@ The primary mention endpoints are `GET /api/mentions/`, `GET /api/mentions/stats
 
 ### Capture modes
 
+- Add the bot to a group or supergroup: the Telegram user who adds it is registered automatically and receives a `full` subscription, without `/start` or `/subscribe`. No other group members are subscribed automatically.
+- In the web Chats page, choose All messages, Mentions + context, or turn saving off (`disabled`). Turning saving off preserves the subscription and previously stored messages/mentions; other subscribers can continue capturing the same group.
+- Disabled subscriptions retain earlier mention text. Context is bounded by the disable time, including the effective capture/update time of shared messages. A context row edited after disabling is omitted for the disabled subscriber because the shared store does not retain prior row versions.
+- Duplicate membership events and removing/re-adding the bot preserve existing choices, including disabled. Promotions to administrator do not subscribe anyone.
+- For a group already containing the bot without a subscription, remove and re-add it, or use the optional `/subscribe all` recovery command in the group. Historical owners cannot safely be inferred. Telegram must deliver the membership event, and registration must succeed.
+- The bot still needs Telegram permission to receive group messages (administrator access or privacy mode disabled). It cannot import earlier history or Telegram's personal read markers.
 - `/subscribe mentions` keeps the existing mention inbox with five messages before and after each mention. Plain `/subscribe` uses this mode.
 - `/subscribe all` starts a complete feed from the moment the mode is enabled.
+- `/unsubscribe` turns saving off for your subscription without deleting history. `/subscribe` and `/mode` resolve your identity through auth after restarts; no earlier `/start` is required.
 - `/mode` shows the current mode; `/mode mentions` and `/mode all` switch it.
 
 The web API exposes `GET /api/chats/`, `PATCH /api/chats/{chat_id}/mode`, and `GET /api/chats/{chat_id}/messages`. The messages endpoint is available only to the owner of a subscription currently in `full` mode.
 
-`GET /api/chats/{chat_id}/messages` returns messages oldest-first within the selected page. `limit` defaults to 100 and accepts 1–200; `before_message_id` is an optional exclusive cursor for older pages. Only records saved after `full` was enabled are returned. Text and media captions are stored, but attachment binaries are not downloaded.
+`GET /api/chats/{chat_id}/messages` returns messages oldest-first within the selected page. `limit` defaults to 100 and accepts 1–200; `before_message_id` is an optional exclusive cursor for older pages. For groups, only records saved after the current `full` interval was enabled are returned. Owner-isolated Business conversations instead retain captured history from the original subscription across mode changes. Text and media captions are stored, but attachment binaries are not downloaded.
 
-Apply the capture-mode migration before deploying this version:
+### Telegram Business private conversations
+
+Enable Secretary/Business Mode for the bot in BotFather, then connect it from the owner's Telegram account settings and select private conversations. This is separate from group Privacy Mode and website/OAuth login. Follow [Telegram's setup guide](https://core.telegram.org/bots/features#business-bots); no extra account password, user-session key, or token needs to be supplied to TG Flow.
+
+The bot handles connection lifecycle, newly delivered incoming/outgoing private text and captions, edits, and deletions. A private conversation is created for its connected account's resolved auth owner with a `full` subscription on first capture. Only `full` and `disabled` are supported for private conversations. Existing disabled choices survive repeated events and reconnection. Edits affect existing captured messages only while capture and the connection are active; they cannot create an archive or restore deleted rows. Delivered deletion events for the current connection remove matching retained messages even when capture is disabled or the connection is inactive. Old history and attachment binaries are not imported; Business commands are captured as messages rather than executed as ordinary bot commands. Ingestion remains read-only; explicit account replies use the separate workflow below. Telegram read-receipt operations are not performed.
+
+Business conversation IDs are internal app IDs; the actual Telegram peer is stored separately. Conversations and messages are scoped by connection owner, so a shared correspondent and Telegram message ID cannot merge different owners' histories. REST and MCP subscription results include `source` (`group` or `business`) and `connection_active`. Business IDs must not be used to construct Telegram links or passed directly to Telegram send/photo methods.
+
+Disconnecting in Telegram stops new collection immediately when its update is received. The owner retains access to previously stored full-mode messages and can advance the TG Flow summary checkpoint. Enabling full capture requires an active connection. A Business subscription switched to `disabled` hides its feed; switching back to `full` restores the already captured archive and read cursor, bounded by the original `subscribed_at`. No messages from the disabled interval are imported. Snapshot generation checks still use `capture_mode_changed_at`.
+
+Unknown or obsolete connection IDs do not ingest messages; records persist across restarts, but an unknown connection requires a Telegram connection update rather than an automatic fetch. If the initial event was missed, try disconnecting and reconnecting in Telegram. Ordering watermarks are strict for messages, deletions and same-ID connection events. A lower-ID lifecycle event is accepted only for a new, non-retired connection ID verified with Telegram's `getBusinessConnection` against the exact connection, owner and enabled state. Verification failure rejects the event. A genuine Telegram update-ID reset after prolonged bot-wide inactivity can therefore require a new connection ID or operator recovery; reconnecting is not guaranteed to rotate the ID. Never clear the watermark automatically or start a second polling process with the same token.
+
+The dependency is pinned to `python-telegram-bot==22.8` for current rights-based Business connection payload compatibility; older 21.7 payload parsing is insufficient.
+
+Apply additive Aerich [migration 5](migrations/models/5_20261103120000_add_business_connections.py) before starting this code, after inspecting the migration plan and taking a database backup. This feature and migration were deployed to the configured VPS on 3 November 2026; a real Business connection, private ingestion and authenticated MCP reads were verified. See the [VPS runbook](../docs/vps-deployment.md#telegram-business--deployment-and-setup).
+
+### Explicit replies from the connected account
+
+TG Flow provides `POST /api/chats/{chat_id}/messages/{message_id}/reply` with `{text, request_id}` and the MCP tool `reply_to_chat_message(chat_id, message_id, text, request_id, confirmed=False)`. Both use one send service and require write scope. MCP additionally rejects false confirmation before reservation; clients must obtain approval of the exact recipient/text. The UI uses an explicit **Send as me** action. Internal app chat IDs and captured target IDs are resolved to the stored Business peer/connection; arbitrary destinations, groups, cross-owner subscriptions and cross-chat targets are rejected.
+
+New sends require active full capture, a visible captured target and a current Telegram connection with matching owner and `can_reply`. Telegram permits replies only in eligible private chats with incoming activity within 24 hours. Fresh rights checks use bounded timeouts; Telegram remains authoritative for chat eligibility. Plain text is trimmed to 1–4096 characters. The result includes `status: sent|failed|unknown`, request UUID, nullable sent message ID, `reply_attached`, and safe error fields. Telegram may send a standalone message if its reply target disappeared, so attachment is reported from the actual result.
+
+Apply additive [migration 6](migrations/models/6_20261103180000_add_business_reply_attempts.py) before running reply code. It adds a durable per-owner request UUID ledger, reserved and committed before any send. A hash binds normalized text, app chat and target; the ledger does not store an extra plaintext request body. Identical repeated keys return their existing result without sending; conflicting payloads return 409. Reserved/crashed attempts remain non-resendable and surface `unknown` / `delivery_pending`. A timeout after sending may mean delivery succeeded, so it reports unknown and never retries automatically. Definitive provider rejection reports failed; a separately approved attempt needs a new UUID. Do not erase or downgrade this ledger to make a request resendable.
+
+`get_chat_reply_status(chat_id, request_id)` and `GET /api/chats/{chat_id}/reply-attempts/{request_id}` are read-only owner-scoped lookups requiring `mentions:read`. They create no reservation and never send or retry a message. Existing results can be retrieved after disconnect/disable or loss of target visibility without enabling a new send. A missing result is not proof of non-delivery while an original request may still be in flight. Successful outgoing messages enter the existing chat store and polling echoes deduplicate by chat/message ID. Replying does not mark any local or Telegram messages read or archive mentions. Replies were deployed on 3 November 2026; real outgoing-message verification remains pending; see the [reply runbook](../docs/vps-deployment.md#private-business-replies--deployment-and-setup).
+
+### New messages since the last summary
+
+Each subscription stores a durable `read_through_message_id` and nullable `last_read_at` independently of mention archives and Telegram read receipts. Existing accessible full-mode history starts unread; switching modes or disabling capture preserves the cursor. Editing an already acknowledged Telegram message ID does not make it unread again.
+
+`GET /api/chats/{chat_id}/unread` returns oldest-first messages, the current read cursor, `snapshot_through_message_id`, mode generation, `has_more`, `next_after_message_id`, and `unread_count`. Limit is 1–200. Continue with the same `through_message_id` and `capture_mode_changed_at` plus `after_message_id=next_after_message_id`. Messages arriving beyond the frozen snapshot remain unread. Reading the feed or unread endpoint never acknowledges anything.
+
+`POST /api/chats/{chat_id}/read` takes `{through_message_id, capture_mode_changed_at}` and requires write scope, current full mode, and a visible captured target. It advances the cursor atomically and monotonically. Stale mode generations fail; smaller or repeated markers never move the cursor backward. It returns the updated subscription. Listing chats includes the cursor, last acknowledgement time, and available unread count (zero outside full mode).
+
+For a requested GPT summary use `list_unread_chat_messages`, read all pages of its frozen snapshot, produce the summary successfully, then call `mark_chat_read` through that snapshot boundary. For an explicitly partial summary acknowledge only its last processed message. Failed summaries do not mark. No extra archive/reply confirmation is required for the user's requested summary workflow; the existing confirmation requirement for archive/reply stays in place. The website provides per-chat unread counts and an explicit mark-as-read action using an observed snapshot.
+
+Back up and inspect migration state before deployment. Apply additive migration 4 (read cursor columns) together with any pending capture-mode migrations; do not reset existing databases:
+
 
 ```bash
 make migrate

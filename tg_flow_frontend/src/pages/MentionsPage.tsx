@@ -394,9 +394,9 @@ export default function MentionsPage() {
           ) : (
             <div className="w-16" />
           )}
-          
-          <Link to="/" className="brand"><span className="brand-mark" /><span>TG Flow</span></Link>
-          
+
+
+
           <button
             onClick={() => refetch()}
             className="refresh-button"
@@ -457,7 +457,7 @@ export default function MentionsPage() {
             </div>
             <h2 className="text-base font-semibold text-white mb-1">No mentions yet</h2>
             <p className="text-zinc-500 text-sm max-w-xs mx-auto">
-              Add the bot to a chat and use <code className="text-violet-400 font-mono text-xs">/subscribe</code>
+              Add the bot to a group to automatically save all new messages for your account. Manage modes or disable your subscription in <Link to="/chats">Chats</Link>.
             </p>
           </div>
         )}
@@ -487,7 +487,7 @@ export default function MentionsPage() {
                       <p className="text-zinc-500 text-xs">{group.mentions.length} mentions</p>
                     </div>
                   </div>
-                  
+
                   <svg 
                     className={`w-4 h-4 text-zinc-500 transition-transform ${expandedChats.has(group.chatId) ? 'rotate-180' : ''}`} 
                     fill="none" 
@@ -513,7 +513,7 @@ export default function MentionsPage() {
                           className="flex items-start gap-3 cursor-pointer group hover:bg-white/[0.02] -m-2 p-2 rounded-lg transition-colors"
                         >
                           <div className="mention-signal" />
-                          
+
                           <div className="flex-1 min-w-0">
                             <div className="flex items-center justify-between gap-2 mb-1">
                               <span className="text-zinc-500 text-xs">
@@ -523,11 +523,11 @@ export default function MentionsPage() {
                                 {formatDate(mention.message_date)}
                               </span>
                             </div>
-                            
+
                             <p className="text-zinc-200 text-sm leading-relaxed">
                               {mention.text}
                             </p>
-                            
+
                             {/* Actions */}
                             <div className="flex items-center gap-3 mt-2">
                               {/* Reply button */}
@@ -565,7 +565,7 @@ export default function MentionsPage() {
                                   </>
                                 )}
                               </button>
-                              
+
                               {/* Open in Telegram */}
                               <button
                                 onClick={(e) => handleOpenTelegram(e, mention.link)}
@@ -579,7 +579,7 @@ export default function MentionsPage() {
                             </div>
                           </div>
                         </div>
-                        
+
                         {/* Reply input */}
                         {replyingTo === mention.id && (
                           <ReplyInput 
